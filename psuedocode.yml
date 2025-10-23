@@ -1,0 +1,26 @@
+Goal: |-
+  Provide TFTP client and server compliant with RFC 1350 (TFTPV2). Support RFC 2347 (TFTP Option Extension). Support RFC 2348 (Blocksize Option), RFC 2349 (Timeout Interval and Transfer Size Options), RFC 7440 (Windowsize Option). No support for RFC 2090 (Multicast Option).
+
+Goroutines:
+  Persistent:
+    UDP_Listener: |-
+      Listen for incoming packets. In response to a packet arrival start a transient goroutine (TFTP session) associated with the source address if one does not exist, either way send packet on appropriate channel for the spawned goroutine.
+    SQLite_Writer: |-
+      Updates database to manage state related to file updates. Listens for updates on write started and write finished channel.
+    Logger: |-
+      Writes to log when sessions start, sessions finish, or errors occur. Listens for updates on for regular logging events and error logging events.
+  Transient:
+    UDP_Job: |-
+      Listen on channel for new packets. This handles actually performing TFTP communication for individual sessions.
+
+Tables:
+  Write_Requests:
+    Filename:
+    # might need to setup trimming for array to only keep, for example, five most recent records
+    Array:
+      Time_started_microseconds: # 0 means not set
+      Time_completed_microseconds: # 0 means not set
+  Available_Files: # only lists most recent version
+    Filename:
+    Time:
+    Mode:

@@ -1,0 +1,126 @@
+package main
+
+type logEventType uint8
+
+const (
+    logEventNewSession = iota
+    logEventEndSession 
+    logEventErrorSession 
+)
+
+type logEvent struct {
+    kind logEventType
+    msg string
+}
+
+func loggerRoutine(events chan<- logEvent){
+    for event := range events {
+        switch event.kind{
+        case logEventErrorSession:
+            // log to logfile with scary message
+        default:
+            // log to logfile with normal message
+        }
+    }
+}
+
+func databaseRoutine(writeStarted chan<- string, writeFinished chan<- string) {
+    for true {
+        select name, isOpen := <- writeStarted:
+            // write to table filewrites with filename and start time set but finished time 0
+        select name, isOpen := <- writeFinished:
+            // write to table filewrites with filename, start time, and finished time set
+            // write to table available files to update time associated with that filename or create if does not exist
+    }
+}
+
+func listenerRoutine(){
+    var (
+        // 0xffff is maximum possible in-transit packet size with TFTP
+        incomingPacket [0xffff]byte
+
+        sessions wg.WaitGroup
+        channels map[string](chan []byte)
+    )
+
+    conn, err := net.ListenUDP("udp", addr)
+    if(err != nil){
+        fmt.Println(err)
+        return
+    }
+    defer conn.Close()
+
+    for true {
+        n, addr, err := conn.ReadFromUDP(incomingPacket)
+        addrString := addr.String()
+        if channel, exists := channels[addrString]; !exists {
+            channel = make(chan []byte)
+            channels[addrString] = channel
+            sessions.Go(tftpSession(addr, channel))
+        }
+        channel <- incomingPacket
+    }
+}
+
+func tftpSession(addr string, messages chan []byte){
+    message := <- messages
+    var state tftpState = newTftpState(message)
+
+    switch opcode {
+        optionsValid = validateOptions(state.options)
+
+        case opcodeReadRequest:
+            if !optionsValid {
+                // get mad
+            }
+            if filename.existsAsFile() {
+                //filename exists
+            }
+        case opcodeWriteRequest:
+            if !optionsValid {
+                // get mad
+            }
+            // is valid
+        default:
+            // error
+    }
+
+    // session establish loop
+    select {
+        case message, isOpen := <- messages:
+            // determine whether this is a read or write request
+            // determine options
+        case //timeout:
+            // die
+    }
+
+    // reading or writing loop
+    select {
+        case message, isOpen  := <- messages:
+            // handle session
+        case //timeout:
+            // die
+    }
+}
+
+func main() {
+    var (
+        logEvents chan logEvent
+        fileWriteStarted chan string
+        fileWriteFinished chan string
+        wg sync.WaitGroup
+    )
+
+    logEvents = make(chan logEvent)
+    defer close(logEvents)
+    fileWriteStarted = make(chan string)
+    defer close(fileWriteStarted)
+    fileWriteFinished = make(chan string)
+    defer close(fileWriteFinished)
+
+    wg.Go(loggerRoutine(logEvents))
+    wg.Go(databaseRoutine(fileWriteStarted, fileWriteFinished))
+    wg.Go(listenerRoutine)
+
+    wg.Wait()
+}
