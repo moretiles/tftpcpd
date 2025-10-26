@@ -173,7 +173,7 @@ func readMessageAsBytes(message readMessage, buf *[]byte) error {
 
 	// append options (if any)
 	for k, v := range message.options {
-		*buf = append(*buf, []byte(k+"\x00"+v+"\x00")...)
+		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
 	return nil
@@ -194,7 +194,7 @@ func writeMessageAsBytes(message writeMessage, buf *[]byte) error {
 
 	// append options (if any)
 	for k, v := range message.options {
-		*buf = append(*buf, []byte(k+"\x00"+v+"\x00")...)
+		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
 	return nil
@@ -255,7 +255,7 @@ func optionAcknowledgeMessageAsBytes(message optionAcknowledgeMessage, buf *[]by
 
 	// append options (if any)
 	for k, v := range message.options {
-		*buf = append(*buf, []byte(k+"\x00"+v+"\x00")...)
+		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
 	return nil
@@ -343,9 +343,10 @@ func bytesAsReadMessage(buf []byte) (readMessage, error) {
 		if err != nil {
 			return readMessage{}, ErrUnterminatedNullString
 		}
+		key = strings.ToLower(key)
 
 		val, err := popNullString(&buf)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return readMessage{}, ErrUnterminatedNullString
 		}
 
@@ -382,9 +383,10 @@ func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 		if err != nil {
 			return writeMessage{}, ErrUnterminatedNullString
 		}
+		key = strings.ToLower(key)
 
 		val, err := popNullString(&buf)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return writeMessage{}, ErrUnterminatedNullString
 		}
 
@@ -442,7 +444,7 @@ func bytesAsErrorMessage(buf []byte) (errorMessage, error) {
 
 	buf = buf[2:]
 	explanation, err := popNullString(&buf)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return errorMessage{}, ErrUnterminatedNullString
 	}
 
@@ -463,9 +465,10 @@ func bytesAsOptionAcknowledgeMessage(buf []byte) (optionAcknowledgeMessage, erro
 		if err != nil {
 			return optionAcknowledgeMessage{}, ErrUnterminatedNullString
 		}
+		key = strings.ToLower(key)
 
 		val, err := popNullString(&buf)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return optionAcknowledgeMessage{}, ErrUnterminatedNullString
 		}
 
