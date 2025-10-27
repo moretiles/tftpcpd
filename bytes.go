@@ -13,7 +13,8 @@ var ErrShortMessage = errors.New("Impossibly short message received")
 var ErrUnterminatedNullString = errors.New("Null byte not found")
 
 const (
-	opcodeReadByte = 1 + iota
+	opcodeInvalid = iota
+	opcodeReadByte
 	opcodeWriteByte
 	opcodeDataByte
 	opcodeAcknowledgeByte
@@ -30,6 +31,7 @@ const (
 	errorCodeUnknownTransferId
 	errorCodeFileAlreadyExists
 	errorCodeNoSuchUser
+	errorCodeOptionAcknowledgeSurprise
 )
 
 /*
@@ -400,7 +402,7 @@ func bytesAsDataMessage(buf []byte) (dataMessage, error) {
 	var blockNumber uint16
 	var data []byte
 
-	minPossibleLen := 2 + 1
+	minPossibleLen := 2
 
 	if len(buf) < minPossibleLen {
 		return dataMessage{}, ErrShortMessage
@@ -409,7 +411,9 @@ func bytesAsDataMessage(buf []byte) (dataMessage, error) {
 	blockNumber += uint16(buf[0]) << 8
 	blockNumber += uint16(buf[1])
 
-	data = buf[2:]
+	if len(buf) >= 2 {
+		data = buf[2:]
+	}
 
 	return newDataMessage(blockNumber, data), nil
 }

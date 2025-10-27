@@ -22,8 +22,6 @@ type config struct {
 	address string
 }
 
-var cfg config = config{}
-
 func helpMessage() {
 	major := 0
 	minor := 0
@@ -37,22 +35,23 @@ func helpMessage() {
 	flag.Usage()
 	fmt.Println("")
 	fmt.Println("If no port is specified then the daemon binds to hostname:69")
+	fmt.Println("")
 }
 
 func main() {
+	defer close(log)
+
 	var (
-		log                      chan logEvent = make(chan logEvent, 200)
-		loggerDemandTermination  chan bool     = make(chan bool, 2)
-		loggerConfirmTermination chan bool     = make(chan bool, 2)
-		serverDemandTermination  chan bool     = make(chan bool, 2)
-		serverConfirmTermination chan bool     = make(chan bool, 2)
+		loggerDemandTermination  chan bool = make(chan bool, 2)
+		loggerConfirmTermination chan bool = make(chan bool, 2)
+		serverDemandTermination  chan bool = make(chan bool, 2)
+		serverConfirmTermination chan bool = make(chan bool, 2)
 		//databaseDemandTermination chan bool = make(chan bool, 2)
 		//databaseConfirmTermination chan bool = make(chan bool, 2)
 		//fileWriteStarted  chan string   = make(chan string)
 		//fileWriteFinished chan string   = make(chan string)
 		wg sync.WaitGroup
 	)
-	defer close(log)
 	defer close(loggerDemandTermination)
 	defer close(loggerConfirmTermination)
 	defer close(serverDemandTermination)
@@ -64,10 +63,10 @@ func main() {
 
 	// setup configuration using commandline arguments
 	{
-		var help *bool = flag.Bool("h", false, "print usage information")
-		var memoryLimit *int = flag.Int("M", 0, "memory limit in megabytes")
 		var debug *bool = flag.Bool("d", false, "enable debug mode")
+		var help *bool = flag.Bool("h", false, "print usage information")
 		var logFile *string = flag.String("l", "", "log file")
+		var memoryLimit *int = flag.Int("M", 0, "memory limit in megabytes")
 
 		flag.Parse()
 
@@ -81,6 +80,7 @@ func main() {
 		cfg.logFile = *logFile
 
 		args := flag.Args()
+		_ = args
 
 		if len(args) != 1 {
 			helpMessage()
@@ -97,10 +97,17 @@ func main() {
 			echoRoutine(serverDemandTermination, serverConfirmTermination, log)
 		})
 
-		//wg.Go(serverRoutine)
+		// server routine handles actual tftp connections made by clients
+		//wg.Go(func() {
+		//serverRoutine(serverDemandTermination, serverConfirmTermination, log)
+		//})
+
+		// logger routine collects logs
 		wg.Go(func() {
 			loggerRoutine(loggerDemandTermination, loggerConfirmTermination, log)
 		})
+
+		// database routine cleans up database and files periodically
 		//wg.Go(databaseRoutine(fileWriteStarted, fileWriteFinished))
 	}
 
