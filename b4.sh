@@ -2,6 +2,5 @@
 
 set -eou pipefail
 
+# run tests
 go test
-
-git push backup

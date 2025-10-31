@@ -12,5 +12,5 @@ var cfg config = config{}
 var log chan logEvent = make(chan logEvent, 150)
 var terminate chan bool
 
-var activeReads map[string]list.List
-var activeReadsMutex sync.RWMutex
+var inUseFiles map[string]list.List
+var inUseFilesMutex sync.RWMutex

@@ -321,7 +321,7 @@ func BytesAsMessage(buf []byte) (any, error) {
 func bytesAsReadMessage(buf []byte) (readMessage, error) {
 	var filename string
 	var mode string
-	var options map[string]string = make(map[string]string)
+	var options map[string]string
 
 	minPossibleLen := 1 + 1 + 5 + 1
 
@@ -331,28 +331,18 @@ func bytesAsReadMessage(buf []byte) (readMessage, error) {
 
 	filename, err := popNullString(&buf)
 	if err != nil {
-		return readMessage{}, ErrUnterminatedNullString
+		return readMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	mode, err = popNullString(&buf)
 	if err != nil {
-		return readMessage{}, ErrUnterminatedNullString
+		return readMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 	mode = strings.ToLower(mode)
 
-	for len(buf) > 0 {
-		key, err := popNullString(&buf)
-		if err != nil {
-			return readMessage{}, ErrUnterminatedNullString
-		}
-		key = strings.ToLower(key)
-
-		val, err := popNullString(&buf)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return readMessage{}, ErrUnterminatedNullString
-		}
-
-		options[key] = val
+	options, err = bytesAsOptionMap(buf)
+	if err != nil {
+		return readMessage{}, err
 	}
 
 	return newReadMessage(filename, mode, options), nil
@@ -361,7 +351,7 @@ func bytesAsReadMessage(buf []byte) (readMessage, error) {
 func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 	var filename string
 	var mode string
-	var options map[string]string = make(map[string]string)
+	var options map[string]string
 
 	minPossibleLen := 1 + 1 + 5 + 1
 
@@ -371,28 +361,18 @@ func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 
 	filename, err := popNullString(&buf)
 	if err != nil {
-		return writeMessage{}, ErrUnterminatedNullString
+		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	mode, err = popNullString(&buf)
 	if err != nil {
-		return writeMessage{}, ErrUnterminatedNullString
+		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 	mode = strings.ToLower(mode)
 
-	for len(buf) > 0 {
-		key, err := popNullString(&buf)
-		if err != nil {
-			return writeMessage{}, ErrUnterminatedNullString
-		}
-		key = strings.ToLower(key)
-
-		val, err := popNullString(&buf)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return writeMessage{}, ErrUnterminatedNullString
-		}
-
-		options[key] = val
+	options, err = bytesAsOptionMap(buf)
+	if err != nil {
+		return writeMessage{}, err
 	}
 
 	return newWriteMessage(filename, mode, options), nil
@@ -456,7 +436,7 @@ func bytesAsErrorMessage(buf []byte) (errorMessage, error) {
 }
 
 func bytesAsOptionAcknowledgeMessage(buf []byte) (optionAcknowledgeMessage, error) {
-	var options map[string]string = make(map[string]string)
+	var options map[string]string
 
 	minPossibleLen := 1 + 1 + 1 + 1
 
@@ -464,20 +444,31 @@ func bytesAsOptionAcknowledgeMessage(buf []byte) (optionAcknowledgeMessage, erro
 		return optionAcknowledgeMessage{}, ErrShortMessage
 	}
 
+	options, err := bytesAsOptionMap(buf)
+	if err != nil {
+		return optionAcknowledgeMessage{}, err
+	}
+
+	return newOptionAcknowledgeMessage(options), nil
+}
+
+func bytesAsOptionMap(buf []byte) (map[string]string, error) {
+	var options map[string]string = make(map[string]string)
+
 	for len(buf) > 0 {
 		key, err := popNullString(&buf)
 		if err != nil {
-			return optionAcknowledgeMessage{}, ErrUnterminatedNullString
+			return nil, errors.Join(err, ErrUnterminatedNullString)
 		}
 		key = strings.ToLower(key)
 
 		val, err := popNullString(&buf)
 		if err != nil && !errors.Is(err, io.EOF) {
-			return optionAcknowledgeMessage{}, ErrUnterminatedNullString
+			return nil, errors.Join(err, ErrUnterminatedNullString)
 		}
 
 		options[key] = val
 	}
 
-	return newOptionAcknowledgeMessage(options), nil
+	return options, nil
 }
