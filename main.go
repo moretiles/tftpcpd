@@ -93,14 +93,14 @@ func main() {
 	// start goroutines
 	{
 		// echo routine simple prototype build when designing system
-		wg.Go(func() {
-			echoRoutine(serverDemandTermination, serverConfirmTermination, log)
-		})
+		//wg.Go(func() {
+		//echoRoutine(serverDemandTermination, serverConfirmTermination, log)
+		//})
 
 		// server routine handles actual tftp connections made by clients
-		//wg.Go(func() {
-		//serverRoutine(serverDemandTermination, serverConfirmTermination, log)
-		//})
+		wg.Go(func() {
+			serverRoutine(serverDemandTermination, serverConfirmTermination)
+		})
 
 		// logger routine collects logs
 		wg.Go(func() {

@@ -335,16 +335,18 @@ func bytesAsReadMessage(buf []byte) (readMessage, error) {
 	}
 
 	mode, err = popNullString(&buf)
-	if err != nil {
+	mode = strings.ToLower(mode)
+	// Only process options if they exist
+	if errors.Is(err, io.EOF) {
+		return newReadMessage(filename, mode, options), nil
+	} else if err != nil {
 		return readMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
-	mode = strings.ToLower(mode)
 
 	options, err = bytesAsOptionMap(buf)
 	if err != nil {
 		return readMessage{}, err
 	}
-
 	return newReadMessage(filename, mode, options), nil
 }
 
@@ -365,14 +367,14 @@ func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 	}
 
 	mode, err = popNullString(&buf)
-	if err != nil {
-		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
-	}
 	mode = strings.ToLower(mode)
-
-	options, err = bytesAsOptionMap(buf)
-	if err != nil {
-		return writeMessage{}, err
+	if !errors.Is(err, io.EOF) {
+		options, err = bytesAsOptionMap(buf)
+		if err != nil {
+			return writeMessage{}, err
+		}
+	} else if err != nil {
+		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	return newWriteMessage(filename, mode, options), nil
