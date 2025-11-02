@@ -11,10 +11,8 @@ import (
 )
 
 func echoRoutine(demandTermination chan bool, confirmTermination chan bool, events chan<- logEvent) {
-	var (
-		// 0xffff is maximum possible in-transit packet size with TFTP
-		incoming []byte = make([]byte, 0xffff)
-	)
+	// 0xffff is maximum possible in-transit packet size with TFTP
+	var incoming []byte = make([]byte, 0xffff)
 
 	// bind to cfg.address
 	addr, err := net.ResolveUDPAddr("udp", cfg.address)
@@ -109,6 +107,11 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool, ev
 
 		if os.IsTimeout(err) {
 			continue
+		} else if err != nil {
+			demandTermination <- true
+			<-confirmTermination
+			sessions.Wait()
+			return
 		}
 
 		incomingCopy := make([]byte, n)

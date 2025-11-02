@@ -20,11 +20,10 @@ func TestReadMessageAsBytes(t *testing.T) {
 
 	err := readMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpReadRequest is nil")
+		t.Fatalf("Some argument passed to tftpReadRequest is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -41,11 +40,10 @@ func TestWriteMessageAsBytes(t *testing.T) {
 	output := []byte{0, opcodeWriteByte, 'f', 'i', 'l', 'e', 0, 'n', 'e', 't', 'a', 's', 'c', 'i', 'i', 0, 's', 'y', 'n', 't', 'a', 'x', 0, 'o', 'n', 0}
 	err := writeMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpWriteRequest is nil")
+		t.Fatalf("Some argument passed to tftpWriteRequest is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -59,11 +57,10 @@ func TestDataMessageAsBytes(t *testing.T) {
 	output = append(output, data...)
 	err := dataMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpDta is nil")
+		t.Fatalf("Some argument passed to tftpDta is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -75,11 +72,10 @@ func TestAcknowledgeMessageAsBytes(t *testing.T) {
 	output := []byte{0, opcodeAcknowledgeByte, byte(blockNumber >> 8), byte(blockNumber % 0x100)}
 	err := acknowledgeMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpAcknowledge is nil")
+		t.Fatalf("Some argument passed to tftpAcknowledge is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -94,11 +90,10 @@ func TestErrorMessageAsBytes(t *testing.T) {
 	output = append(output, '\x00')
 	err := errorMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpAcknowledge is nil")
+		t.Fatalf("Some argument passed to tftpAcknowledge is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -115,11 +110,10 @@ func TestOptionAcknowledgeMessageAsBytes(t *testing.T) {
 	output = append(output, []byte(val1+"\x00")...)
 	err := optionAcknowledgeMessageAsBytes(message, &buf)
 	if err != nil {
-		t.Errorf("Some argument passed to tftpAcknowledge is nil")
+		t.Fatalf("Some argument passed to tftpAcknowledge is nil")
 	}
 	if !bytes.Equal(output, buf) {
-		t.Errorf("%v != %v\n", output, buf)
-		return
+		t.Fatalf("%v != %v\n", output, buf)
 	}
 }
 
@@ -145,12 +139,10 @@ func TestBytesAsReadMessage(t *testing.T) {
 
 	message, err := bytesAsReadMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsReadMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsReadMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected readMessage{%v, %v, %v} != message readMessage{%v, %v, %v}\n", expected.filename, expected.mode, expected.options, message.filename, message.mode, message.options)
-		return
+		t.Fatalf("expected readMessage{%v, %v, %v} != message readMessage{%v, %v, %v}\n", expected.filename, expected.mode, expected.options, message.filename, message.mode, message.options)
 	}
 }
 
@@ -176,12 +168,10 @@ func TestBytesAsWriteMessage(t *testing.T) {
 
 	message, err := bytesAsWriteMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsWriteMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsWriteMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected writeMessage{%v, %v, %v} != message writeMessage{%v, %v, %v}\n", expected.filename, expected.mode, expected.options, message.filename, message.mode, message.options)
-		return
+		t.Fatalf("expected writeMessage{%v, %v, %v} != message writeMessage{%v, %v, %v}\n", expected.filename, expected.mode, expected.options, message.filename, message.mode, message.options)
 	}
 }
 
@@ -195,12 +185,10 @@ func TestBytesAsDataMessage(t *testing.T) {
 
 	message, err := bytesAsDataMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsDataMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsDataMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected dataMessage{%v, %v} != message dataMessage{%v, %v}\n", expected.blockNumber, expected.body, message.blockNumber, message.body)
-		return
+		t.Fatalf("expected dataMessage{%v, %v} != message dataMessage{%v, %v}\n", expected.blockNumber, expected.body, message.blockNumber, message.body)
 	}
 }
 
@@ -212,12 +200,10 @@ func TestBytesAsAcknowledgeMessage(t *testing.T) {
 
 	message, err := bytesAsAcknowledgeMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsAcknowledgeMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsAcknowledgeMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected acknowledgeMessage{%v} != message acknowledgeMessage{%v}\n", expected.blockNumber, message.blockNumber)
-		return
+		t.Fatalf("expected acknowledgeMessage{%v} != message acknowledgeMessage{%v}\n", expected.blockNumber, message.blockNumber)
 	}
 }
 
@@ -232,12 +218,10 @@ func TestBytesAsErrorMessage(t *testing.T) {
 
 	message, err := bytesAsErrorMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsErrorMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsErrorMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected errorMessage{%v, %v} != message errorMessage{%v, %v}\n", expected.errorCode, expected.explanation, message.errorCode, message.explanation)
-		return
+		t.Fatalf("expected errorMessage{%v, %v} != message errorMessage{%v, %v}\n", expected.errorCode, expected.explanation, message.errorCode, message.explanation)
 	}
 }
 
@@ -257,11 +241,9 @@ func TestBytesAsOptionAcknowledgeMessage(t *testing.T) {
 
 	message, err := bytesAsOptionAcknowledgeMessage(buf)
 	if err != nil {
-		t.Errorf("Some error occured when bytesAsOptionAcknowledgeMessage tried parsing buf\n")
-		return
+		t.Fatalf("Some error occured when bytesAsOptionAcknowledgeMessage tried parsing buf\n")
 	}
 	if !reflect.DeepEqual(expected, message) {
-		t.Errorf("expected optionAcknowledgeMessage{%v} != message optionAcknowlegeMessage{%v}\n", expected.options, message.options)
-		return
+		t.Fatalf("expected optionAcknowledgeMessage{%v} != message optionAcknowlegeMessage{%v}\n", expected.options, message.options)
 	}
 }

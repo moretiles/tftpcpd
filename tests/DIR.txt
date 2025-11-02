@@ -1,0 +1,1 @@
+All files actually read from, written to, or expected to match tests should have a .bin extension.
