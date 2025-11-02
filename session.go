@@ -60,6 +60,10 @@ func newTftpSession(destination *net.UDPAddr) (tftpSession, error) {
 	return session, nil
 }
 
+func (session *tftpSession) Close() error {
+	return session.destination.Close()
+}
+
 func (session *tftpSession) lastSentMessageType() uint16 {
 	opcodeLen := 2
 	if session.buf == nil || len(session.buf) < opcodeLen {
@@ -70,7 +74,7 @@ func (session *tftpSession) lastSentMessageType() uint16 {
 }
 
 // add self to list of readers for the most recent version of filename
-func (session *tftpSession) reserve() (int64, *os.File, error) {
+func (session *tftpSession) reserve() (int64, error) {
 	// TODO:
 	// Acquire write lock on global map
 
@@ -83,8 +87,12 @@ func (session *tftpSession) reserve() (int64, *os.File, error) {
 	// Release lock
 
 	file, err := os.Open(session.filename)
+	if err != nil {
+		return 0, err
+	}
+	session.file = file
 
-	return unixMicro, file, err
+	return unixMicro, err
 }
 
 // remove self from list of readers attached what was the most recent version of filename at session.unixMicro
@@ -103,14 +111,19 @@ func (session *tftpSession) release(unixMicro int64) error {
 }
 
 // inform databse we want to begin writing a version of filename and get a time attached to it
-func (session *tftpSession) prepare() (int64, *os.File, error) {
+func (session *tftpSession) prepare() (int64, error) {
 	unixMicro := time.Now().UnixMicro()
 
 	// TODO:
 	// Tell database to create entry for filename with the writeStarted time equal to unixMicro and writeEnded time equal to 0
 
 	file, err := os.Create(session.filename)
-	return unixMicro, file, err
+	if err != nil {
+		return 0, err
+	}
+
+	session.file = file
+	return unixMicro, err
 }
 
 // inform database client succesfully uploaded entire file, mark it as available
@@ -128,9 +141,13 @@ func (session *tftpSession) overwriteSuccess(unixMicro int64) error {
 
 // inform database client succesfully uploaded entire file, mark it as available
 func (session *tftpSession) overwriteFailure(unixMicro int64) error {
-	// When err is not nil then that means overwriteSuccess was already called and the overwrite succeeded
-	err := session.file.Close()
-	if err == nil {
+	/*
+	 * When err is nil then some error has prevented the file from being written as it should have been
+	 * When err is os.ErrClosed then overwriteSuccess has already been called and all is good
+	 * When err is any other error then something weird has happened
+	 */
+	fileError := session.file.Close()
+	if errors.Is(fileError, os.ErrClosed) {
 		return nil
 	}
 
@@ -138,7 +155,7 @@ func (session *tftpSession) overwriteFailure(unixMicro int64) error {
 	// Tell database to remove the record where name = filename AND writeStarted = unixMicro
 	// Then delete the partially written file
 
-	return nil
+	return fileError
 }
 
 func (session *tftpSession) readFile() error {
@@ -170,18 +187,17 @@ func (session *tftpSession) readFile() error {
 // assumption made is that session.buf already contains a data message as bytes
 func (session *tftpSession) writeFile() error {
 	dataPreambleLen := 4
+	body := session.mostRecentMessage.(dataMessage).body
 
 	// Zero length data section means previous message was the last message containing file data
-	if len(session.buf) < dataPreambleLen {
-		return errors.New("Buffer size is too small to write")
-	} else if len(session.buf) == dataPreambleLen {
+	if len(body) == dataPreambleLen {
 		return io.EOF
 	}
 
 	// somewhat hacky way to avoid double copying
 	// We know that bytes 5 and onward must be actual data being sent
-	n, err := session.file.Write(session.buf[dataPreambleLen:])
-	if n != len(session.buf[dataPreambleLen:]) {
+	n, err := session.file.Write(body)
+	if n != len(body) {
 		return errors.New("Truncated")
 	}
 	if err != nil {
@@ -189,7 +205,7 @@ func (session *tftpSession) writeFile() error {
 	}
 
 	// Short message means end of file
-	if n < len(session.buf[dataPreambleLen:]) {
+	if n < int(session.blockSize) {
 		err = io.EOF
 	}
 	return err
@@ -197,7 +213,7 @@ func (session *tftpSession) writeFile() error {
 
 // send length bytes of session.buf to client
 func (session *tftpSession) send() error {
-	if session == nil || session.buf != nil {
+	if session == nil || session.buf == nil {
 		return nil
 	}
 
@@ -377,7 +393,7 @@ func (session *tftpSession) read(client <-chan []byte) error {
 		session.buf = make([]byte, session.blockSize)
 	}
 
-	unixMicro, session.file, err = session.reserve()
+	unixMicro, err = session.reserve()
 	if err != nil {
 		return err
 	}
@@ -455,7 +471,7 @@ func (session *tftpSession) write(client <-chan []byte) error {
 	}
 
 	// get access to a file and associated time
-	unixMicro, session.file, err = session.prepare()
+	unixMicro, err = session.prepare()
 	if err != nil {
 		return err
 	}
@@ -515,6 +531,8 @@ func (session *tftpSession) write(client <-chan []byte) error {
 			}
 
 			wroteEverything = true
+		} else if err != nil {
+			return err
 		}
 
 		// acknowledge

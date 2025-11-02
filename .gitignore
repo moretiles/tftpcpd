@@ -14,5 +14,5 @@ tags
 # b4
 .b4.lock
 
-# gdb
-.gdb_history
+# ignore temporary test data
+tests/tmp/*.bin
