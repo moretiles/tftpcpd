@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -10,11 +11,16 @@ import (
 	"time"
 )
 
+const (
+	dataPreambleLength = 4
+)
+
 type tftpSession struct {
 	// used for connection
 	destinationAddr *net.UDPAddr
 	destination     *net.UDPConn
-	buf             []byte
+	sendBuf         []byte
+	receiveBuf      []byte
 
 	// set when opening file
 	file     *os.File
@@ -43,19 +49,22 @@ func newTftpSession(destination *net.UDPAddr) (tftpSession, error) {
 	var err error
 	var session tftpSession
 
+	// Default values
+	session.blockSize = 512
+	session.timeout = time.Second * 5
+	session.transferSize = 0 // 0 if unknown
+	session.windowSize = 512
+
 	session.destinationAddr = destination
 	session.destination, err = net.DialUDP("udp", nil, session.destinationAddr)
 	if err != nil {
 		return tftpSession{}, err
 	}
-	session.buf = make([]byte, 512)
+	// Add 4 to support the data message preamble
+	session.sendBuf = make([]byte, session.blockSize+dataPreambleLength)
+	session.receiveBuf = make([]byte, session.blockSize+dataPreambleLength)
 
 	session.options = make(map[string]string)
-
-	session.blockSize = 512
-	session.timeout = time.Second * 5
-	session.transferSize = 0 // 0 if unknown
-	session.windowSize = 512
 
 	return session, nil
 }
@@ -66,11 +75,11 @@ func (session *tftpSession) Close() error {
 
 func (session *tftpSession) lastSentMessageType() uint16 {
 	opcodeLen := 2
-	if session.buf == nil || len(session.buf) < opcodeLen {
+	if session.sendBuf == nil || len(session.sendBuf) < opcodeLen {
 		return opcodeInvalid
 	}
 
-	return uint16(session.buf[1])
+	return uint16(session.sendBuf[1])
 }
 
 // add self to list of readers for the most recent version of filename
@@ -159,38 +168,36 @@ func (session *tftpSession) overwriteFailure(unixMicro int64) error {
 }
 
 func (session *tftpSession) readFile() error {
-	dataPreambleLen := 4
-	if len(session.buf) <= dataPreambleLen {
+	if len(session.sendBuf) <= dataPreambleLength {
 		return errors.New("Buffer size way too small to read")
 	}
 
 	// somewhat hacky way to avoid double copying
 	// we let MessageAsBytes handle the first 4 bytes and handle the rest by reading
-	err := MessageAsBytes(newDataMessage(session.blockNumber, nil), &session.buf)
+	err := MessageAsBytes(newDataMessage(session.blockNumber, nil), &session.sendBuf)
 	if err != nil {
 		return err
 	}
 
-	session.buf = session.buf[:session.blockSize]
-	n, err := session.file.Read(session.buf[dataPreambleLen:])
+	session.sendBuf = session.sendBuf[:session.blockSize+dataPreambleLength]
+	n, err := session.file.Read(session.sendBuf[dataPreambleLength:])
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 
-	// Need to adjust session.buf slice length
-	// Writing bytes to session.buf[dataPreambleLen:] does not update session.buf itself
-	newSliceEnd := dataPreambleLen + n
-	session.buf = session.buf[0:newSliceEnd]
+	// Need to adjust session.sendBuf slice length
+	// Writing bytes to session.sendBuf[dataPreambleLen:] does not update session.sendBuf itself
+	newSliceEnd := dataPreambleLength + n
+	session.sendBuf = session.sendBuf[0:newSliceEnd]
 	return err
 }
 
-// assumption made is that session.buf already contains a data message as bytes
+// assumption made is that session.sendBuf already contains a data message as bytes
 func (session *tftpSession) writeFile() error {
-	dataPreambleLen := 4
 	body := session.mostRecentMessage.(dataMessage).body
 
 	// Zero length data section means previous message was the last message containing file data
-	if len(body) == dataPreambleLen {
+	if len(body) == dataPreambleLength {
 		return io.EOF
 	}
 
@@ -211,26 +218,53 @@ func (session *tftpSession) writeFile() error {
 	return err
 }
 
-// send length bytes of session.buf to client
+// send length bytes of session.sendBuf to client
 func (session *tftpSession) send() error {
-	if session == nil || session.buf == nil {
+	if session == nil || session.sendBuf == nil {
 		return nil
 	}
 
-	n, err := session.destination.Write(session.buf)
+	n, err := session.destination.Write(session.sendBuf)
 	if err != nil {
 		return err
 	}
-	if n != len(session.buf) {
+	if n != len(session.sendBuf) {
 		return errors.New("Truncated network send")
 	}
 
 	return nil
 }
 
+func (session *tftpSession) receive() error {
+
+	// if we timeout then resend
+	for _ = range 10 {
+		// Add timeout
+		session.receiveBuf = session.receiveBuf[:session.blockSize+dataPreambleLength]
+		messageLength, addr, err := session.destination.ReadFromUDP(session.receiveBuf)
+		session.receiveBuf = session.receiveBuf[:messageLength]
+		if err != nil {
+			return err
+		}
+		ip1, ip2 := addr.IP, session.destinationAddr.IP
+		port1, port2 := addr.Port, session.destinationAddr.Port
+		zone1, zone2 := addr.Zone, session.destinationAddr.Zone
+		if !ip1.Equal(ip2) || port1 != port2 || zone1 != zone2 {
+			return errors.New("Client changed ip/port... possible man in the middle attack?")
+		}
+		session.mostRecentMessage, err = BytesAsMessage(session.receiveBuf[:messageLength])
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return errors.New("Client connection (likely) dead")
+}
+
 // create and send data message to client
 func (session *tftpSession) dataMessage() error {
-	// session.buf used to store loaded data so special care taken to avoid unneeded secondary write
+	// session.sendBuf used to store loaded data so special care taken to avoid unneeded secondary write
 	// see session.fileRead to learn how data is put into proper order
 
 	return session.send()
@@ -241,11 +275,11 @@ func (session *tftpSession) acknowledgeMessage() error {
 	acknowledgeOpcodeLen := 2
 	acknowledgeBlockNumLen := 2
 
-	err := MessageAsBytes(newAcknowledgeMessage(session.blockNumber), &session.buf)
+	err := MessageAsBytes(newAcknowledgeMessage(session.blockNumber), &session.sendBuf)
 	if err != nil {
 		return err
 	}
-	if len(session.buf) != acknowledgeOpcodeLen+acknowledgeBlockNumLen {
+	if len(session.sendBuf) != acknowledgeOpcodeLen+acknowledgeBlockNumLen {
 		return errors.New("Truncated acknowledge message")
 	}
 
@@ -258,11 +292,11 @@ func (session *tftpSession) errorMessage(code uint8, message string) error {
 	errorCodeLen := 2
 	nullTerminatorLen := 1
 
-	err := MessageAsBytes(newErrorMessage(uint16(code), message), &session.buf)
+	err := MessageAsBytes(newErrorMessage(uint16(code), message), &session.sendBuf)
 	if err != nil {
 		return err
 	}
-	if len(session.buf) != errorOpcodeLen+errorCodeLen+len(message)+nullTerminatorLen {
+	if len(session.sendBuf) != errorOpcodeLen+errorCodeLen+len(message)+nullTerminatorLen {
 		return errors.New("Truncated error message")
 	}
 
@@ -273,7 +307,7 @@ func (session *tftpSession) errorMessage(code uint8, message string) error {
 func (session *tftpSession) optionAcknowledgeMessage() error {
 	optionAcknowledgeOpcodeLen := 2
 
-	err := MessageAsBytes(newOptionAcknowledgeMessage(session.options), &session.buf)
+	err := MessageAsBytes(newOptionAcknowledgeMessage(session.options), &session.sendBuf)
 	if err != nil {
 		return err
 	}
@@ -281,44 +315,20 @@ func (session *tftpSession) optionAcknowledgeMessage() error {
 	for key, value := range session.options {
 		expectedTotal += len(key) + 1 + len(value) + 1
 	}
-	if len(session.buf) != optionAcknowledgeOpcodeLen+expectedTotal {
+	if len(session.sendBuf) != optionAcknowledgeOpcodeLen+expectedTotal {
 		return errors.New("Truncated option acknowledge message")
 	}
 
 	return session.send()
 }
 
-func (session *tftpSession) receive(client <-chan []byte) error {
-	var err error
-
-	// if we timeout then resend
-	for _ = range 10 {
-		select {
-		case messageBytes := <-client:
-			session.mostRecentMessage, err = BytesAsMessage(messageBytes)
-			if err != nil {
-				return errors.New("Invalid")
-			}
-			return nil
-		case <-time.After(session.timeout):
-			session.send()
-		}
-
-		return errors.New("Client connection (likely) dead")
-	}
-
-	return nil
-}
-
 // establish connection with client
 // only valid messages client can use to initiate connection are readMessage and writeMessage
 // check client options to see if they are valid
-func (session *tftpSession) establish(client <-chan []byte) (uint16, error) {
+func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 	var err error
 
-	if err = session.receive(client); err != nil {
-		return opcodeInvalid, err
-	}
+	session.mostRecentMessage, err = BytesAsMessage(bytes)
 
 	switch session.mostRecentMessage.(type) {
 	case readMessage:
@@ -330,8 +340,7 @@ func (session *tftpSession) establish(client <-chan []byte) (uint16, error) {
 			session.errorMessage(errorCodeUndefined, "One or more options contain invalid values")
 			return opcodeInvalid, errors.New("One or more options contain invalid values")
 		}
-
-		//events <- newNormalEvent(destination, fmt.Sprintf("Attempt to download: %v", state.filename))
+		session.options = session.mostRecentMessage.(readMessage).options
 
 	case writeMessage:
 		session.opcode = opcodeWriteByte
@@ -342,8 +351,7 @@ func (session *tftpSession) establish(client <-chan []byte) (uint16, error) {
 			session.errorMessage(errorCodeUndefined, "One or more options contain invalid values")
 			return opcodeInvalid, errors.New("One or more options contain invalid values")
 		}
-
-		//events <- newNormalEvent(destination, fmt.Sprintf("Attempt to upload: %v", state.filename))
+		session.options = session.mostRecentMessage.(writeMessage).options
 
 	default:
 		session.errorMessage(errorCodeIllegalOperation, "Client requested invalid operation when opening connection")
@@ -359,7 +367,7 @@ func (session *tftpSession) establish(client <-chan []byte) (uint16, error) {
 	return session.opcode, nil
 }
 
-func (session *tftpSession) read(client <-chan []byte) error {
+func (session *tftpSession) read() error {
 	var readEverything bool = false
 	var unixMicro int64
 	var err error
@@ -369,12 +377,14 @@ func (session *tftpSession) read(client <-chan []byte) error {
 	switch session.lastSentMessageType() {
 	case opcodeOptionAcknowledgeByte:
 		session.lastValidMessage = session.mostRecentMessage
-		if err = session.receive(client); err != nil {
+		if err = session.receive(); err != nil {
 			return err
 		}
 
 		switch session.mostRecentMessage.(type) {
 		case acknowledgeMessage:
+			// pass
+		default:
 			return errors.New("Did not acknowledge the server's attempt to open a connection with supplied options")
 		}
 
@@ -388,9 +398,12 @@ func (session *tftpSession) read(client <-chan []byte) error {
 	// we expect that client will acknowledge first data block with 1
 	session.blockNumber = 1
 
-	// file may be less than blocksize
-	if int(session.blockSize) != len(session.buf) {
-		session.buf = make([]byte, session.blockSize)
+	// adjust buffer size because of blockSize
+	if len(session.sendBuf) != int(dataPreambleLength+session.blockSize) {
+		session.sendBuf = make([]byte, session.blockSize+dataPreambleLength)
+	}
+	if len(session.receiveBuf) != int(dataPreambleLength+session.blockSize) {
+		session.receiveBuf = make([]byte, dataPreambleLength+session.blockSize)
 	}
 
 	unixMicro, err = session.reserve()
@@ -405,12 +418,10 @@ func (session *tftpSession) read(client <-chan []byte) error {
 	// if the client sends anything else return error
 	for !readEverything {
 		err = session.readFile()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				readEverything = true
-			} else {
-				return errors.New("File read error")
-			}
+		if errors.Is(err, io.EOF) || len(session.sendBuf) < int(dataPreambleLength+session.blockSize) {
+			readEverything = true
+		} else if err != nil {
+			return errors.New("File read error")
 		}
 
 		if session.dataMessage() != nil {
@@ -418,19 +429,31 @@ func (session *tftpSession) read(client <-chan []byte) error {
 		}
 
 		session.lastValidMessage = session.mostRecentMessage
-		if err = session.receive(client); err != nil {
+		if err = session.receive(); err != nil {
 			return err
 		}
 
 		// read until acknowledgement with correct blockNumber, handling gracefully retransmissions
-		var i int
-		for i = range 5 {
+		var i int = 0
+		var awaitingRequest bool = true
+		for awaitingRequest {
+			// check if client is sending bad acknowledgements or possible network issue
+			if i >= 5 {
+				// don't tell client so as to avoid further network issues
+				// this is not technically a standard reason to terminate by RFC, but is reasonable
+				return errors.New("Underlying network may be bad, many retransmiteed messages")
+			}
+
 			switch session.mostRecentMessage.(type) {
+			case readMessage:
+				if err = session.receive(); err != nil {
+					return err
+				}
 			case acknowledgeMessage:
 				if session.mostRecentMessage.(acknowledgeMessage).blockNumber == session.blockNumber {
-					break
+					awaitingRequest = false
 				} else if session.mostRecentMessage.(acknowledgeMessage).blockNumber < session.blockNumber {
-					if err = session.receive(client); err != nil {
+					if err = session.receive(); err != nil {
 						return err
 					}
 				} else {
@@ -442,22 +465,17 @@ func (session *tftpSession) read(client <-chan []byte) error {
 				session.errorMessage(errorCodeIllegalOperation, "Client requested invalid operation during established connection")
 				return errors.New("Client requested invalid operation during established connection")
 			}
+
+			i += 1
 		}
 
-		// check if client is sending bad acknowledgements or possible network issue
-		if i >= 4 {
-			// don't tell client so as to avoid further network issues
-			// this is not technically a standard reason to terminate by RFC, but is reasonable
-			return errors.New("Underlying network may be bad, many retransmiteed messages")
-		} else {
-			session.blockNumber += 1
-		}
+		session.blockNumber += 1
 	}
 
 	return nil
 }
 
-func (session *tftpSession) write(client <-chan []byte) error {
+func (session *tftpSession) write() error {
 	var wroteEverything bool = false
 	var unixMicro int64
 	var err error
@@ -465,9 +483,12 @@ func (session *tftpSession) write(client <-chan []byte) error {
 	// we expect that client will acknowledge first data block with 1
 	session.blockNumber = 1
 
-	// file may be less than blocksize
-	if int(session.blockSize) != len(session.buf) {
-		session.buf = make([]byte, session.blockSize)
+	// adjust buffer size because of blockSize
+	if len(session.sendBuf) != int(dataPreambleLength+session.blockSize) {
+		session.sendBuf = make([]byte, session.blockSize+dataPreambleLength)
+	}
+	if len(session.receiveBuf) != int(dataPreambleLength+session.blockSize) {
+		session.receiveBuf = make([]byte, dataPreambleLength+session.blockSize)
 	}
 
 	// get access to a file and associated time
@@ -482,7 +503,7 @@ func (session *tftpSession) write(client <-chan []byte) error {
 	// if the client sends anything else return error
 	for !wroteEverything {
 		session.lastValidMessage = session.mostRecentMessage
-		if err = session.receive(client); err != nil {
+		if err = session.receive(); err != nil {
 			return err
 		}
 
@@ -494,7 +515,7 @@ func (session *tftpSession) write(client <-chan []byte) error {
 				if session.mostRecentMessage.(dataMessage).blockNumber == session.blockNumber {
 					break
 				} else if session.mostRecentMessage.(dataMessage).blockNumber < session.blockNumber {
-					if err = session.receive(client); err != nil {
+					if err = session.receive(); err != nil {
 						return err
 					}
 				} else {
@@ -547,7 +568,7 @@ func (session *tftpSession) write(client <-chan []byte) error {
 func (session *tftpSession) updateOptions(options map[string]string) error {
 	for keyCased, valueAscii := range options {
 		key := strings.ToLower(keyCased)
-		valueInt, err := strconv.Atoi(valueAscii)
+		valueInt, err := strconv.ParseInt(valueAscii, 10, 64)
 		if err != nil {
 			panic(err)
 		}
@@ -555,7 +576,7 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 		switch key {
 		case "blksize":
 			if valueInt < 8 || valueInt > 65464 {
-				// refer to original specification to learn about what should be done in this case
+				return errors.New(fmt.Sprintf("Invalid blksize value %v requested by client", valueInt))
 			} else {
 				session.blockSize = uint16(valueInt)
 				options["blksize"] = valueAscii
@@ -568,12 +589,24 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 				options["timeout"] = valueAscii
 			}
 		case "tsize":
-			if valueInt <= 0 {
-				// refer to original specification to learn about what should be done in this case
-			} else {
-				session.transferSize = uint64(valueInt)
-				options["tsize"] = valueAscii
+			if valueInt == 0 {
+				/*
+				 * tsize of 0 as tsize in read request is special
+				 * server responds in optionAcknowledge message with size of file
+				 */
+				if session.opcode == opcodeReadByte {
+					info, err := os.Lstat(session.filename)
+					if err != nil {
+						return errors.New(fmt.Sprintf("Unable to get the size of %v", session.filename))
+					}
+					valueInt = info.Size()
+				} else {
+					return errors.New(fmt.Sprintf("Invalid blksize value %v requested by client", valueInt))
+				}
 			}
+
+			session.transferSize = uint64(valueInt)
+			options["tsize"] = strconv.FormatInt(valueInt, 10)
 		case "multicast":
 			// not implement
 			continue

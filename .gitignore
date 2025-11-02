@@ -16,3 +16,6 @@ tags
 
 # ignore temporary test data
 tests/tmp/*.bin
+
+# executable
+tftpcpd

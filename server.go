@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,14 +9,14 @@ import (
 	"time"
 )
 
-func echoRoutine(demandTermination chan bool, confirmTermination chan bool, events chan<- logEvent) {
+func echoRoutine(demandTermination chan bool, confirmTermination chan bool) {
 	// 0xffff is maximum possible in-transit packet size with TFTP
 	var incoming []byte = make([]byte, 0xffff)
 
 	// bind to cfg.address
 	addr, err := net.ResolveUDPAddr("udp", cfg.address)
 	if err != nil {
-		events <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to resolve address: %v", cfg.address))
+		log <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to resolve address: %v", cfg.address))
 
 		demandTermination <- true
 		<-confirmTermination
@@ -27,7 +26,7 @@ func echoRoutine(demandTermination chan bool, confirmTermination chan bool, even
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		events <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to bind to address: %v", cfg.address))
+		log <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to bind to address: %v", cfg.address))
 
 		demandTermination <- true
 		<-confirmTermination
@@ -53,39 +52,36 @@ func echoRoutine(demandTermination chan bool, confirmTermination chan bool, even
 			continue
 		}
 
-		events <- newDebugEvent(addr.String(), fmt.Sprintf("Got bytes %v", incoming[:n]))
+		log <- newDebugEvent(addr.String(), fmt.Sprintf("Got bytes %v", incoming[:n]))
 		message, err := BytesAsMessage(incoming[:n])
 		if err != nil {
 			fmt.Println("Error turning bytes into message")
-			events <- newErrorEvent(addr.String(), "Error turning bytes into message")
+			log <- newErrorEvent(addr.String(), "Error turning bytes into message")
 			continue
 		}
 
-		events <- newDebugEvent(addr.String(), fmt.Sprintf("Got message of type %v", reflect.TypeOf(message)))
+		log <- newDebugEvent(addr.String(), fmt.Sprintf("Got message of type %v", reflect.TypeOf(message)))
 	}
 }
 
-func serverRoutine(demandTermination chan bool, confirmTermination chan bool, events chan<- logEvent) {
+func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
 	var (
 		// 0xffff is maximum possible in-transit packet size with TFTP
 		incoming []byte = make([]byte, 0xffff)
-
-		sessions           sync.WaitGroup
-		terminatedSessions chan string              = make(chan string, 150)
-		activeSessions     map[string](chan []byte) = make(map[string](chan []byte))
+		sessions sync.WaitGroup
 	)
 
-	addr, err := net.ResolveUDPAddr("udp", cfg.address)
+	serverAddr, err := net.ResolveUDPAddr("udp", cfg.address)
 	if err != nil {
-		events <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to resolve address: %v", cfg.address))
+		log <- newErrorEvent(serverAddr.String(), fmt.Sprintf("Unable to resolve address: %v", serverAddr.String()))
 		demandTermination <- true
 		<-confirmTermination
 		return
 	}
 
-	conn, err := net.ListenUDP("udp", addr)
+	conn, err := net.ListenUDP("udp", serverAddr)
 	if err != nil {
-		events <- newErrorEvent(addr.String(), fmt.Sprintf("Unable to bind to address: %v", cfg.address))
+		log <- newErrorEvent(serverAddr.String(), fmt.Sprintf("Unable to bind to address: %v", cfg.address))
 		demandTermination <- true
 		<-confirmTermination
 		return
@@ -94,7 +90,7 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool, ev
 
 	for true {
 		conn.SetReadDeadline(time.Now().Add(time.Second))
-		n, addr, err := conn.ReadFromUDP(incoming)
+		n, clientAddr, err := conn.ReadFromUDP(incoming)
 
 		select {
 		case <-demandTermination:
@@ -116,62 +112,83 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool, ev
 
 		incomingCopy := make([]byte, n)
 		if copy(incomingCopy, incoming[:n]) != n {
-			events <- newErrorEvent(addr.String(), "Truncation error when reading message")
+			log <- newErrorEvent(clientAddr.String(), "Truncation error when reading message")
 			continue
 		}
+		//fmt.Println(incomingCopy)
 
-		select {
-		case terminatedSession, isOpen := <-terminatedSessions:
-			if !isOpen {
-				events <- newErrorEvent(addr.String(), "Listener reached unrecoverable error when managing index of existing sessions, waiting for existing connections to die")
-				demandTermination <- true
-				<-confirmTermination
-				sessions.Wait()
-				return
-			}
+		//select {
+		//case terminatedSession, isOpen := <-terminatedSessions:
+		//if !isOpen {
+		//log <- newErrorEvent(clientAddr.String(), "Listener reached unrecoverable error when managing index of existing sessions, waiting for existing connections to die")
+		//demandTermination <- true
+		//<-confirmTermination
+		//sessions.Wait()
+		//return
+		//}
 
-			delete(activeSessions, terminatedSession)
-		default:
-			// continue
-		}
+		//fmt.Println("Yes terminated sessions")
+		//delete(activeSessions, terminatedSession)
+		//default:
+		//fmt.Println("No terminated sessions")
+		//}
 
-		session, exists := activeSessions[addr.String()]
-		if !exists {
-			session = make(chan []byte)
-			activeSessions[addr.String()] = session
-			// not implemented yet
-			sessions.Go(func() { sessionRoutine(addr, session, demandTermination) })
-		}
-		session <- incomingCopy
+		//fmt.Println("client =", clientAddr.String())
+		//fmt.Println("There are", len(activeSessions), "active sessions")
+		//session, exists := activeSessions[clientAddr.String()]
+		//if !exists {
+		//session = make(chan []byte)
+		//activeSessions[clientAddr.String()] = session
+		// not implemented yet
+		//sessions.Go(func() { sessionRoutine(clientAddr, session, terminatedSessions) })
+		//}
+		//session <- incomingCopy
+
+		sessions.Go(func() { sessionRoutine(clientAddr, incomingCopy) })
 	}
 }
 
-func sessionRoutine(destinationAddr *net.UDPAddr, client <-chan []byte, terminate chan<- bool) {
+func sessionRoutine(destinationAddr *net.UDPAddr, bytes []byte) {
 	session, err := newTftpSession(destinationAddr)
-
-	opcode, err := session.establish(client)
-	defer func() {
-		terminate <- true
-	}()
 	if err != nil {
-		log <- newErrorEvent(destinationAddr.String(), "Session routine unexpected exit")
+		log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession for %v", err))
+	}
+	defer session.Close()
+
+	opcode, err := session.establish(bytes)
+	if err != nil {
+		log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Session routine failed to establish: %v", err))
 		return
 	}
 
 	switch opcode {
 	case opcodeReadByte:
-		err = session.read(client)
+		log <- newNormalEvent(session.destinationAddr.String(), fmt.Sprintf("Client began download: %v", session.filename))
+		err = session.read()
 	case opcodeWriteByte:
-		err = session.write(client)
+		log <- newNormalEvent(session.destinationAddr.String(), fmt.Sprintf("Client began upload: %v", session.filename))
+		err = session.write()
 	default:
-		err = errors.New("Don't know this opcode")
+		log <- newErrorEvent(session.destinationAddr.String(), "Client requested invalid operation")
+		return
 	}
 
 	// log error
 	if err != nil {
-		log <- newErrorEvent(destinationAddr.String(), "Session routine unexpected exit")
+		switch opcode {
+		case opcodeReadByte:
+			log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed download: %v", err))
+		case opcodeWriteByte:
+			log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed upload: %v", err))
+		}
 		return
 	}
 
+	switch opcode {
+	case opcodeReadByte:
+		log <- newNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed download: %v", session.filename))
+	case opcodeWriteByte:
+		log <- newNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed upload: %v", session.filename))
+	}
 	return
 }

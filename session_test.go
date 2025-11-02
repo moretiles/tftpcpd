@@ -80,33 +80,33 @@ func TestSessionWriteToFileFailure(t *testing.T) {
 	// Test overwriteFailure when file not already closed by overwriteSuccess
 	time, err := session.prepare()
 	if err != nil {
-		t.Fatalf("Failed to prepare to overwrite file for session")
+		t.Fatalf("Failed to prepare to overwrite file for session\n")
 	}
 	err = session.overwriteFailure(time)
 	if err != nil {
-		t.Fatalf("overwriteFailure unable to actually close file meant to write")
+		t.Fatalf("overwriteFailure unable to actually close file meant to write\n")
 	}
 	err = session.file.Close()
 	if !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("overwriteFailure returned with success but never closed the file")
+		t.Fatalf("overwriteFailure returned with success but never closed the file\n")
 	}
 
 	// Test overwriteFailure when file already closed by overwriteSuccess
 	time, err = session.prepare()
 	if err != nil {
-		t.Fatalf("Failed to prepare to overwrite file for session")
+		t.Fatalf("Failed to prepare to overwrite file for session\n")
 	}
 	err = session.overwriteSuccess(time)
 	if err != nil {
-		t.Fatalf("overwriteSuccess unable to actually close file meant to write")
+		t.Fatalf("overwriteSuccess unable to actually close file meant to write\n")
 	}
 	err = session.overwriteFailure(time)
 	if err != nil {
-		t.Fatalf("overwriteFailure unable to handle file already closed")
+		t.Fatalf("overwriteFailure unable to handle file already closed\n")
 	}
 	err = session.file.Close()
 	if !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("overwriteSuccess and overwriteFailure both never closed the file")
+		t.Fatalf("overwriteSuccess and overwriteFailure both never closed the file\n")
 	}
 }
 
@@ -128,7 +128,7 @@ func TestSessionWriteToFileSuccess(t *testing.T) {
 	// Call session.prepare()
 	time, err := session.prepare()
 	if err != nil {
-		t.Fatalf("Failed to prepare to overwrite file for session")
+		t.Fatalf("Failed to prepare to overwrite file for session\n")
 	}
 	defer session.overwriteFailure(time)
 
@@ -136,7 +136,7 @@ func TestSessionWriteToFileSuccess(t *testing.T) {
 	dataPath := "tests/data/TestSessionWriteToFileSuccess.bin"
 	data, err := os.ReadFile(dataPath)
 	if err != nil {
-		t.Fatalf("Failed to read in data needed to write")
+		t.Fatalf("Failed to read in data needed to write\n")
 	}
 
 	_, err = session.file.Write(data)
@@ -216,89 +216,35 @@ func TestSessionFileToDataMessages(t *testing.T) {
 	dataPath := "tests/data/TestSessionFileToDataMessages.bin"
 	session, err := newTftpSession(addr)
 	if err != nil {
-		t.Fatalf("newTftpSession failed to make connection")
+		t.Fatalf("newTftpSession failed to make connection\n")
 	}
 	defer session.Close()
 	session.filename = dataPath
-	session.buf = make([]byte, 1024)
+	session.sendBuf = make([]byte, 1024)
 	time, err := session.reserve()
 	if err != nil {
-		t.Fatalf("Call to reserve failed for tftpSession")
+		t.Fatalf("Call to reserve failed for tftpSession\n")
 	}
 	defer session.release(time)
 
 	// Call readFile
 	err = session.readFile()
 	if err != nil {
-		t.Fatalf("Uhh looks like we couldn't read anything and turn it into a data message")
+		t.Fatalf("Uhh looks like we couldn't read anything and turn it into a data message\n")
 	}
 
 	// Call send
 	err = session.send()
 	if err != nil {
-		t.Fatalf("Failed to send over network data message")
+		t.Fatalf("Failed to send over network data message\n")
 	}
 
 	wg.Wait()
 }
 
-func goroutineClientSend_TestSessionWriteDataMessagesToFile(t *testing.T) {
-	// Open UDP connection using addrString
-	addr, err := net.ResolveUDPAddr("udp", addrString)
-	if err != nil {
-		t.Fatalf("Resolving %v failed\n", addrString)
-	}
-	conn, err := net.DialUDP("udp", nil, addr)
-	if err != nil {
-		t.Fatalf("Unable to send message to listener")
-	}
-	defer conn.Close()
-
-	// Read in data
-	dataPath := "tests/data/TestSessionWriteDataMessagesToFile.bin"
-	msg, err := os.ReadFile(dataPath)
-	if err != nil {
-		t.Fatalf("Unable to open %v for reading", dataPath)
-	}
-
-	// Write to listener
-	_, err = conn.Write(msg)
-	if err != nil {
-		t.Fatalf("Writing to listener failed")
-	}
-}
-
-func goroutineChannelSend_TestSessionWriteDataMessagesToFile(t *testing.T, messages chan<- []byte) {
-	// Start UDP Listener
-	addr, err := net.ResolveUDPAddr("udp", addrString)
-	if err != nil {
-		t.Fatalf("Resolving %v failed\n", addrString)
-	}
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		t.Fatalf("Cannot listen on %v\n", addrString)
-	}
-	defer conn.Close()
-
-	// Read once from connection
-	buf := make([]byte, 1024)
-	n, addr, err := conn.ReadFromUDP(buf)
-	if err != nil {
-		t.Fatalf("Reading from UDP connection failed\n")
-	}
-	buf = buf[:n]
-
-	// Send data over channel
-	messages <- buf
-}
-
 func TestSessionWriteDataMessagesToFile(t *testing.T) {
-	var wg sync.WaitGroup
 	var messages chan []byte = make(chan []byte, 5)
 	defer close(messages)
-	wg.Go(func() { goroutineChannelSend_TestSessionWriteDataMessagesToFile(t, messages) })
-	time.Sleep(time.Second)
-	wg.Go(func() { goroutineClientSend_TestSessionWriteDataMessagesToFile(t) })
 
 	// Initialize UDPConn and session
 	tmpPath := "tests/tmp/TestSessionWriteDataMessagesToFile.bin"
@@ -309,42 +255,48 @@ func TestSessionWriteDataMessagesToFile(t *testing.T) {
 	}
 	session, err := newTftpSession(addr)
 	if err != nil {
-		t.Fatalf("Failed to create new tftpSession")
+		t.Fatalf("Failed to create new tftpSession\n")
 	}
 	defer session.Close()
 	session.filename = tmpPath
-	session.buf = make([]byte, 1024)
+	session.sendBuf = make([]byte, 1024)
+	session.receiveBuf = make([]byte, 1024)
 	time, err := session.prepare()
 	if err != nil {
-		t.Fatalf("Failed to prepare file: %v for session", session.filename)
+		t.Fatalf("Failed to prepare file: %v for session\n", session.filename)
 	}
 	defer session.overwriteFailure(time)
 
 	// receive, write, and close
-	err = session.receive(messages)
+	dataPath := "tests/data/TestSessionWriteDataMessagesToFile.bin"
+	session.receiveBuf, err = os.ReadFile(dataPath)
 	if err != nil {
-		t.Fatalf("Failed to receive any message... timeout")
+		t.Fatalf("Failed to read in data from %v\n", dataPath)
+	}
+	session.mostRecentMessage, err = BytesAsMessage(session.receiveBuf)
+	if err != nil {
+		t.Fatalf("Failed to convert bytes to data message for %v\n", dataPath)
 	}
 	err = session.writeFile()
 	if err != nil && !errors.Is(err, io.EOF) {
-		t.Fatalf("Failed to write dataMessage received to file: %v", session.filename)
+		t.Fatalf("Failed to write dataMessage received to file: %v\n", session.filename)
 	}
 	err = session.overwriteSuccess(time)
 	if err != nil {
-		t.Fatalf("Failed to succesfully overwrite: %v. Issue closing?", session.filename)
+		t.Fatalf("Failed to succesfully overwrite: %v. Issue closing?\n", session.filename)
 	}
 
 	// Ensure file written to matches file output
 	expectedPath := "tests/expected/TestSessionWriteDataMessagesToFile.bin"
 	tmp, err := os.ReadFile(tmpPath)
 	if err != nil {
-		t.Fatalf("Failed to read: %v", tmpPath)
+		t.Fatalf("Failed to read: %v\n", tmpPath)
 	}
 	expected, err := os.ReadFile(expectedPath)
 	if err != nil {
-		t.Fatalf("Failed to read: %v", expectedPath)
+		t.Fatalf("Failed to read: %v\n", expectedPath)
 	}
 	if !slices.Equal(tmp, expected) {
-		t.Fatalf("tmp: {%v} != expected: {%v}", tmp, expected)
+		t.Fatalf("tmp: {%v} != expected: {%v}\n", tmp, expected)
 	}
 }
