@@ -1,5 +1,7 @@
 # Trivial File Transfer Protocol Cross-Platform Daemon
 
+Basic TFTP server functionality works. Current progess and future plans on roadmap listed in this document.
+
 ## Current Progress
 * Downloading files works.
 * Uploading files works.
