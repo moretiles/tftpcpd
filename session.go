@@ -95,7 +95,7 @@ func (session *tftpSession) reserve() (int64, error) {
 	// Use the global map to get the linked list for the filename requested and append to the end the timestamp being reserved
 	// Release lock
 
-	file, err := os.Open(session.filename)
+	file, err := cfg.directory.Open(session.filename)
 	if err != nil {
 		return 0, err
 	}
@@ -126,7 +126,7 @@ func (session *tftpSession) prepare() (int64, error) {
 	// TODO:
 	// Tell database to create entry for filename with the writeStarted time equal to unixMicro and writeEnded time equal to 0
 
-	file, err := os.Create(session.filename)
+	file, err := cfg.directory.Create(session.filename)
 	if err != nil {
 		return 0, err
 	}
@@ -197,7 +197,7 @@ func (session *tftpSession) writeFile() error {
 	body := session.mostRecentMessage.(dataMessage).body
 
 	// Zero length data section means previous message was the last message containing file data
-	if len(body) == dataPreambleLength {
+	if len(body) == 0 {
 		return io.EOF
 	}
 
@@ -428,41 +428,37 @@ func (session *tftpSession) read() error {
 			return errors.New("Unable to send data to client")
 		}
 
+		// setup for receive loop
 		session.lastValidMessage = session.mostRecentMessage
-		if err = session.receive(); err != nil {
-			return err
-		}
+		var i int = 1
+		var awaitingRequest bool = true
 
 		// read until acknowledgement with correct blockNumber, handling gracefully retransmissions
-		var i int = 0
-		var awaitingRequest bool = true
 		for awaitingRequest {
-			// check if client is sending bad acknowledgements or possible network issue
-			if i >= 5 {
+			// timeout after five bad messages
+			if i > 5 {
 				// don't tell client so as to avoid further network issues
-				// this is not technically a standard reason to terminate by RFC, but is reasonable
 				return errors.New("Underlying network may be bad, many retransmiteed messages")
 			}
 
+			// Get next potentially valid message
+			if err = session.receive(); err != nil {
+				return err
+			}
+
+			// Read messages or acknowledgements of lesser block numbers are treated as retransmissions
 			switch session.mostRecentMessage.(type) {
 			case readMessage:
-				if err = session.receive(); err != nil {
-					return err
-				}
+				// pass
 			case acknowledgeMessage:
 				if session.mostRecentMessage.(acknowledgeMessage).blockNumber == session.blockNumber {
 					awaitingRequest = false
-				} else if session.mostRecentMessage.(acknowledgeMessage).blockNumber < session.blockNumber {
-					if err = session.receive(); err != nil {
-						return err
-					}
-				} else {
+				} else if session.mostRecentMessage.(acknowledgeMessage).blockNumber > session.blockNumber {
 					return errors.New("Out of sync blockNumber")
 				}
 			case errorMessage:
 				return errors.New(session.mostRecentMessage.(errorMessage).explanation)
 			default:
-				session.errorMessage(errorCodeIllegalOperation, "Client requested invalid operation during established connection")
 				return errors.New("Client requested invalid operation during established connection")
 			}
 
@@ -502,44 +498,35 @@ func (session *tftpSession) write() error {
 	// if the client sends an errorMessage then we log it and return error
 	// if the client sends anything else return error
 	for !wroteEverything {
+		// setup for receive loop
 		session.lastValidMessage = session.mostRecentMessage
-		if err = session.receive(); err != nil {
-			return err
-		}
+		var i int = 1
+		var awaitingRequest = true
 
-		// read until acknowledgement with correct blockNumber, handling gracefully retransmissions
-		var i int
-		for i = range 5 {
-			switch session.mostRecentMessage.(type) {
-			case dataMessage:
-				if session.mostRecentMessage.(dataMessage).blockNumber == session.blockNumber {
-					break
-				} else if session.mostRecentMessage.(dataMessage).blockNumber < session.blockNumber {
-					if err = session.receive(); err != nil {
-						return err
-					}
-				} else {
-					err = errors.New("Out of sync blockNumber")
-					return err
-				}
-			case errorMessage:
-				err = errors.New(session.mostRecentMessage.(errorMessage).explanation)
-				return err
-			default:
-				session.errorMessage(errorCodeIllegalOperation, "Client requested invalid operation during established connection")
-				err = errors.New("Client requested invalid operation during established connection")
+		// read until acknowledgement with correct blockNumber, handle gracefully retransmission
+		for awaitingRequest {
+			if i > 5 {
+				return errors.New("Underlying network may be bad, many retransmiteed messages")
+			}
+
+			if err = session.receive(); err != nil {
 				return err
 			}
-		}
 
-		// check if client is sending bad acknowledgements or possible network issue
-		if i >= 4 {
-			// don't tell client so as to avoid further network issues
-			// this is not technically a standard reason to terminate by RFC, but is reasonable
-			err = errors.New("Underlying network may be bad, many retransmiteed messages")
-			return err
-		} else {
-			session.blockNumber += 1
+			switch session.mostRecentMessage.(type) {
+			case writeMessage:
+				// pass
+			case dataMessage:
+				if session.mostRecentMessage.(dataMessage).blockNumber == session.blockNumber {
+					awaitingRequest = false
+				} else if session.mostRecentMessage.(dataMessage).blockNumber > session.blockNumber {
+					return errors.New("Out of sync blockNumber")
+				}
+			case errorMessage:
+				return errors.New(session.mostRecentMessage.(errorMessage).explanation)
+			default:
+				return errors.New("Client requested invalid operation during established connection")
+			}
 		}
 
 		// write to file
@@ -560,6 +547,8 @@ func (session *tftpSession) write() error {
 		if err = session.acknowledgeMessage(); err != nil {
 			return err
 		}
+
+		session.blockNumber += 1
 	}
 
 	return nil
@@ -595,7 +584,7 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 				 * server responds in optionAcknowledge message with size of file
 				 */
 				if session.opcode == opcodeReadByte {
-					info, err := os.Lstat(session.filename)
+					info, err := cfg.directory.Lstat(session.filename)
 					if err != nil {
 						return errors.New(fmt.Sprintf("Unable to get the size of %v", session.filename))
 					}

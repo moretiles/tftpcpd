@@ -3,6 +3,6 @@
 set -eou pipefail
 
 # run tests
-go test
+make test
 
 rm -f .b4.lock

@@ -1,0 +1,1 @@
+This directory acts as the tftp server root when performing tests.

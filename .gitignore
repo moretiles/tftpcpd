@@ -15,7 +15,8 @@ tags
 .b4.lock
 
 # ignore temporary test data
-tests/tmp/*.bin
+/tests/tmp/*.bin
+/tests/root/*.bin
 
 # executable
 tftpcpd
