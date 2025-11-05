@@ -14,12 +14,16 @@ import (
 
 type config struct {
 	// flags
+	directory   *os.Root
 	memoryLimit int
 	debug       bool
 	logFile     string
 
 	// args
 	address string
+
+	// used to check whether we are testing
+	testing *bool
 }
 
 func helpMessage() {
@@ -38,8 +42,15 @@ func helpMessage() {
 	fmt.Println("")
 }
 
+func init() {
+	cfg.testing = flag.Bool("T", false, "Used to control special behavior required for running tests.")
+}
+
 func main() {
+	var err error
+
 	defer close(log)
+	defer cfg.directory.Close()
 
 	var (
 		loggerDemandTermination  chan bool = make(chan bool, 2)
@@ -63,7 +74,8 @@ func main() {
 
 	// setup configuration using commandline arguments
 	{
-		var debug *bool = flag.Bool("d", false, "enable debug mode")
+		var directory *string = flag.String("d", ".", "root directory of server")
+		var debug *bool = flag.Bool("D", false, "enable debug mode")
 		var help *bool = flag.Bool("h", false, "print usage information")
 		var logFile *string = flag.String("l", "", "log file")
 		var memoryLimit *int = flag.Int("M", 0, "memory limit in megabytes")
@@ -75,19 +87,24 @@ func main() {
 			os.Exit(0)
 		}
 
+		cfg.directory, err = os.OpenRoot(*directory)
+		if err != nil {
+			fmt.Printf("Fatal error opening server root directory: %v\n", *directory)
+		}
 		cfg.memoryLimit = *memoryLimit
 		cfg.debug = *debug
 		cfg.logFile = *logFile
 
 		args := flag.Args()
-		_ = args
 
-		if len(args) != 1 {
+		if len(args) == 0 {
+			cfg.address = "127.0.0.1:8173"
+		} else if len(args) == 1 {
+			cfg.address = args[0]
+		} else {
 			helpMessage()
 			os.Exit(1)
 		}
-
-		cfg.address = args[0]
 	}
 
 	// start goroutines
@@ -104,7 +121,7 @@ func main() {
 
 		// logger routine collects logs
 		wg.Go(func() {
-			loggerRoutine(loggerDemandTermination, loggerConfirmTermination, log)
+			loggerRoutine(loggerDemandTermination, loggerConfirmTermination)
 		})
 
 		// database routine cleans up database and files periodically

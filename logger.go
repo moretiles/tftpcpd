@@ -53,7 +53,7 @@ func (event logEvent) String() string {
 		event.message)
 }
 
-func loggerRoutine(demandTermination, confirmTermination chan bool, events <-chan logEvent) {
+func loggerRoutine(demandTermination, confirmTermination chan bool) {
 	logTo := os.Stdout
 	/*
 		if cfg.logFile != "" {
@@ -64,14 +64,14 @@ func loggerRoutine(demandTermination, confirmTermination chan bool, events <-cha
 
 	for true {
 		select {
-		case event, isOpen := <-events:
+		case event, isOpen := <-log:
 			if !isOpen {
 				// signal to main that we want to terminate this routine and all others
 				demandTermination <- true
 				<-confirmTermination
 
 				// make it so that we no longer can read from this channel
-				events = nil
+				log = nil
 			} else {
 				fmt.Fprintf(logTo, "%v\n", event)
 			}

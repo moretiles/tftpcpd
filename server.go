@@ -88,6 +88,8 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
 	}
 	defer conn.Close()
 
+	log <- newNormalEvent(serverAddr.String(), fmt.Sprintf("Server successfully bound to: %v", serverAddr.String()))
+
 	for true {
 		conn.SetReadDeadline(time.Now().Add(time.Second))
 		n, clientAddr, err := conn.ReadFromUDP(incoming)

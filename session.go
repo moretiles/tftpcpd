@@ -95,7 +95,7 @@ func (session *tftpSession) reserve() (int64, error) {
 	// Use the global map to get the linked list for the filename requested and append to the end the timestamp being reserved
 	// Release lock
 
-	file, err := os.Open(session.filename)
+	file, err := cfg.directory.Open(session.filename)
 	if err != nil {
 		return 0, err
 	}
@@ -126,7 +126,7 @@ func (session *tftpSession) prepare() (int64, error) {
 	// TODO:
 	// Tell database to create entry for filename with the writeStarted time equal to unixMicro and writeEnded time equal to 0
 
-	file, err := os.Create(session.filename)
+	file, err := cfg.directory.Create(session.filename)
 	if err != nil {
 		return 0, err
 	}
@@ -584,7 +584,7 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 				 * server responds in optionAcknowledge message with size of file
 				 */
 				if session.opcode == opcodeReadByte {
-					info, err := os.Lstat(session.filename)
+					info, err := cfg.directory.Lstat(session.filename)
 					if err != nil {
 						return errors.New(fmt.Sprintf("Unable to get the size of %v", session.filename))
 					}
