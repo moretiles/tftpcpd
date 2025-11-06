@@ -10,6 +10,8 @@ import (
 	//"time"
 	//"errors"
 	//"strings"
+	_ "database/sql"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type config struct {
