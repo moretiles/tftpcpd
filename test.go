@@ -18,9 +18,4 @@ func init() {
 	if err != nil {
 		fmt.Println("Failed to setup environment for tests")
 	}
-
-	cfg.debug = false
-	cfg.memoryLimit = 0
-	cfg.debug = false
-	cfg.logFile = ""
 }

@@ -4,6 +4,8 @@ ld_flags = -ldflags='-s -w'
 
 ## Principal operations
 
+all: prepare build
+
 prepare:
 	go get .
 
@@ -14,7 +16,7 @@ debug:
 	dlv debug
 
 test:
-	go test -tags test -- -T
+	go test -tags test -- -testing
 
 clean:
 	rm -f out/tftpcpd*

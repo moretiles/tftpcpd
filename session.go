@@ -334,6 +334,10 @@ func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 	case readMessage:
 		session.opcode = opcodeReadByte
 		session.filename = session.mostRecentMessage.(readMessage).filename
+		_, err := cfg.directory.Lstat(session.filename)
+		if err != nil {
+			return opcodeInvalid, errors.New(fmt.Sprintf("Client requested file does not exist: %v", session.filename))
+		}
 		session.mode = session.mostRecentMessage.(readMessage).mode
 		err = session.updateOptions(session.mostRecentMessage.(readMessage).options)
 		if err != nil {
@@ -376,6 +380,9 @@ func (session *tftpSession) read() error {
 	// If we have just sent an options acknowledgement message we need to operate on the client's acknowledgement message
 	switch session.lastSentMessageType() {
 	case opcodeOptionAcknowledgeByte:
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), "Awaiting acknowledgement from client of option acknowledge message")
+		}
 		session.lastValidMessage = session.mostRecentMessage
 		if err = session.receive(); err != nil {
 			return err
@@ -390,6 +397,10 @@ func (session *tftpSession) read() error {
 
 		if session.mostRecentMessage.(acknowledgeMessage).blockNumber != 0 {
 			return errors.New("Did not acknowledge the server's attempt to open a connection with supplied options")
+		}
+
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), "Received acknowledgement from client of option acknowledge message")
 		}
 	default:
 		// pass
@@ -406,22 +417,35 @@ func (session *tftpSession) read() error {
 		session.receiveBuf = make([]byte, dataPreambleLength+session.blockSize)
 	}
 
+	// get access to file with associated time
+	if cfg.debug {
+		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Reserving %v", session.filename))
+	}
 	unixMicro, err = session.reserve()
 	if err != nil {
 		return err
 	}
 	defer session.release(unixMicro)
+	if cfg.debug {
+		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Reserved %v with file time %v", session.filename, unixMicro))
+	}
 
 	// for loop designed to deal with multiple possible client messages
 	// if the client sends an acknowledgeMessage then we should send the next data message
 	// if the client sends an errorMessage then we log it and return error
 	// if the client sends anything else return error
 	for !readEverything {
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Preparing data message with block number #%v", session.blockNumber))
+		}
 		err = session.readFile()
 		if errors.Is(err, io.EOF) || len(session.sendBuf) < int(dataPreambleLength+session.blockSize) {
 			readEverything = true
 		} else if err != nil {
 			return errors.New("File read error")
+		}
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Prepared data message with block number #%v", session.blockNumber))
 		}
 
 		if session.dataMessage() != nil {
@@ -433,6 +457,9 @@ func (session *tftpSession) read() error {
 		var i int = 1
 		var awaitingRequest bool = true
 
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Awaiting client acknowledgement of block #%v", session.blockNumber))
+		}
 		// read until acknowledgement with correct blockNumber, handling gracefully retransmissions
 		for awaitingRequest {
 			// timeout after five bad messages
@@ -464,6 +491,9 @@ func (session *tftpSession) read() error {
 
 			i += 1
 		}
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Client acknowledged block #%v", session.blockNumber))
+		}
 
 		session.blockNumber += 1
 	}
@@ -488,11 +518,17 @@ func (session *tftpSession) write() error {
 	}
 
 	// get access to a file and associated time
+	if cfg.debug {
+		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Preparing %v", session.filename))
+	}
 	unixMicro, err = session.prepare()
 	if err != nil {
 		return err
 	}
 	defer session.overwriteFailure(unixMicro)
+	if cfg.debug {
+		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Prepared %v with file time %v", session.filename, unixMicro))
+	}
 
 	// if the client sends an dataMessage then we should acknowledge it
 	// if the client sends an errorMessage then we log it and return error
@@ -504,6 +540,9 @@ func (session *tftpSession) write() error {
 		var awaitingRequest = true
 
 		// read until acknowledgement with correct blockNumber, handle gracefully retransmission
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Awaiting client data block #%v", session.blockNumber))
+		}
 		for awaitingRequest {
 			if i > 5 {
 				return errors.New("Underlying network may be bad, many retransmiteed messages")
@@ -528,8 +567,14 @@ func (session *tftpSession) write() error {
 				return errors.New("Client requested invalid operation during established connection")
 			}
 		}
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Client sent data block #%v", session.blockNumber))
+		}
 
 		// write to file
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Writing data message with block number #%v", session.blockNumber))
+		}
 		err = session.writeFile()
 		if errors.Is(err, io.EOF) {
 			// It is okay to try to close an already closed file, the second close just fails
@@ -541,6 +586,9 @@ func (session *tftpSession) write() error {
 			wroteEverything = true
 		} else if err != nil {
 			return err
+		}
+		if cfg.debug {
+			log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Wrote data message with block number #%v", session.blockNumber))
 		}
 
 		// acknowledge
