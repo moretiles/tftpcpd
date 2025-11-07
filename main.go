@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path/filepath"
 	//"net"
 	"os"
 	//"reflect"
@@ -19,7 +20,11 @@ type config struct {
 	directory   *os.Root
 	memoryLimit int
 	debug       bool
-	logFile     string
+
+	// logs
+	normalLogFile string
+	debugLogFile  string
+	errorLogFile  string
 
 	// args
 	address string
@@ -28,7 +33,7 @@ type config struct {
 	testing *bool
 }
 
-func helpMessage() {
+func helpMessage(body func()) {
 	major := 0
 	minor := 0
 	patch := 0
@@ -38,19 +43,17 @@ func helpMessage() {
 	fmt.Println("Usage:")
 	fmt.Println("tftpcpd [options] hostname[:port]")
 	fmt.Println("")
-	flag.Usage()
+	body()
 	fmt.Println("")
-	fmt.Println("If no port is specified then the daemon binds to hostname:69")
+	fmt.Println("If no port is specified then the daemon binds to hostname:8173")
 	fmt.Println("")
 }
 
 func init() {
-	cfg.testing = flag.Bool("T", false, "Used to control special behavior required for running tests.")
+	cfg.testing = flag.Bool("testing", false, "Used to control special behavior required for running tests.")
 }
 
 func main() {
-	var err error
-
 	defer close(log)
 	defer cfg.directory.Close()
 
@@ -76,26 +79,42 @@ func main() {
 
 	// setup configuration using commandline arguments
 	{
-		var directory *string = flag.String("d", ".", "root directory of server")
-		var debug *bool = flag.Bool("D", false, "enable debug mode")
-		var help *bool = flag.Bool("h", false, "print usage information")
-		var logFile *string = flag.String("l", "", "log file")
-		var memoryLimit *int = flag.Int("M", 0, "memory limit in megabytes")
+		// Set flag.Usage to change default help message
+		oldFlagUsageFunction := flag.Usage
+		flag.Usage = func() { helpMessage(oldFlagUsageFunction) }
+
+		var help *bool = flag.Bool("help", false, "print usage information")
+
+		var directory *string = flag.String("directory", ".", "root directory of server")
+
+		var debug *bool = flag.Bool("debug", false, "enable debug mode")
+		var normalLogFile *string = flag.String("normal-log", "", "log file")
+		var debugLogFile *string = flag.String("debug-log", "", "debug log file")
+		var errorLogFile *string = flag.String("error-log", "", "error log file")
 
 		flag.Parse()
 
 		if *help {
-			helpMessage()
+			flag.Usage()
 			os.Exit(0)
 		}
 
-		cfg.directory, err = os.OpenRoot(*directory)
+		absoluteDirectory, err := filepath.Abs(*directory)
 		if err != nil {
-			fmt.Printf("Fatal error opening server root directory: %v\n", *directory)
+			fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory as absolute path: %v ", *directory)))
+			os.Exit(1)
 		}
-		cfg.memoryLimit = *memoryLimit
+		cfg.directory, err = os.OpenRoot(absoluteDirectory)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory: %v", absoluteDirectory)))
+			os.Exit(1)
+		}
+		log <- newNormalEvent("CONFIG", fmt.Sprintf("Ready to serve as root directory: %v", absoluteDirectory))
+
 		cfg.debug = *debug
-		cfg.logFile = *logFile
+		cfg.normalLogFile = *normalLogFile
+		cfg.debugLogFile = *debugLogFile
+		cfg.errorLogFile = *errorLogFile
 
 		args := flag.Args()
 
@@ -104,7 +123,7 @@ func main() {
 		} else if len(args) == 1 {
 			cfg.address = args[0]
 		} else {
-			helpMessage()
+			flag.Usage()
 			os.Exit(1)
 		}
 	}

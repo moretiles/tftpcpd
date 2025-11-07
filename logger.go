@@ -54,13 +54,25 @@ func (event logEvent) String() string {
 }
 
 func loggerRoutine(demandTermination, confirmTermination chan bool) {
-	logTo := os.Stdout
-	/*
-		if cfg.logFile != "" {
-			logTo := os.OpenFile(cfg.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
-			defer(close(logTo))
-		}
-	*/
+	normalMessageLog := os.Stdout
+	debugMessageLog := os.Stderr
+	errorMessageLog := os.Stderr
+	var normalMessageLogError, debugMessageLogError, errorMessageLogError error
+	if cfg.normalLogFile != "" {
+		normalMessageLog, normalMessageLogError = os.OpenFile(cfg.normalLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+		defer normalMessageLog.Close()
+	}
+	if cfg.debugLogFile != "" {
+		debugMessageLog, debugMessageLogError = os.OpenFile(cfg.debugLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+		defer debugMessageLog.Close()
+	}
+	if cfg.errorLogFile != "" {
+		errorMessageLog, errorMessageLogError = os.OpenFile(cfg.errorLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+		defer errorMessageLog.Close()
+	}
+	if normalMessageLogError != nil || debugMessageLogError != nil || errorMessageLogError != nil {
+		fmt.Fprintln(os.Stderr, "Unable to open one or more files logging was requested to")
+	}
 
 	for true {
 		select {
@@ -70,10 +82,18 @@ func loggerRoutine(demandTermination, confirmTermination chan bool) {
 				demandTermination <- true
 				<-confirmTermination
 
-				// make it so that we no longer can read from this channel
-				log = nil
+				return
 			} else {
-				fmt.Fprintf(logTo, "%v\n", event)
+				switch event.kind {
+				case normalMsg:
+					fmt.Fprintln(normalMessageLog, event)
+				case debugMsg:
+					fmt.Fprintln(debugMessageLog, event)
+				case errorMsg:
+					fmt.Fprintln(errorMessageLog, event)
+				default:
+					log <- newErrorEvent("LOGGER", fmt.Sprintf("Malformed log partial: %v", event.message))
+				}
 			}
 		case <-demandTermination:
 			confirmTermination <- true
