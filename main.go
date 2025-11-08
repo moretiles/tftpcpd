@@ -54,26 +54,24 @@ func init() {
 }
 
 func main() {
-	defer close(log)
-	defer cfg.directory.Close()
-
 	var (
-		loggerDemandTermination  chan bool = make(chan bool, 2)
-		loggerConfirmTermination chan bool = make(chan bool, 2)
-		serverDemandTermination  chan bool = make(chan bool, 2)
-		serverConfirmTermination chan bool = make(chan bool, 2)
-		//databaseDemandTermination chan bool = make(chan bool, 2)
-		//databaseConfirmTermination chan bool = make(chan bool, 2)
+		loggerParentToChild chan Signal = make(chan Signal, 2)
+		loggerChildToParent chan Signal = make(chan Signal, 2)
+		serverParentToChild chan Signal = make(chan Signal, 2)
+		serverChildToParent chan Signal = make(chan Signal, 2)
+		//databaseParentToChild chan Signal = make(chan Signal, 2)
+		//databaseChildToParent chan Signal = make(chan Signal, 2)
 		//fileWriteStarted  chan string   = make(chan string)
 		//fileWriteFinished chan string   = make(chan string)
 		wg sync.WaitGroup
+        exitCode int
 	)
-	defer close(loggerDemandTermination)
-	defer close(loggerConfirmTermination)
-	defer close(serverDemandTermination)
-	defer close(serverConfirmTermination)
-	//defer close(databaseDemandTermination)
-	//defer close(databaseConfirmTermination)
+	defer close(loggerParentToChild)
+	defer close(loggerChildToParent)
+	defer close(serverParentToChild)
+	defer close(serverChildToParent)
+	//defer close(databaseParentToChild)
+	//defer close(databaseChildToParent)
 	//defer close(fileWriteStarted)
 	//defer close(fileWriteFinished)
 
@@ -137,45 +135,81 @@ func main() {
 
 		// server routine handles actual tftp connections made by clients
 		wg.Go(func() {
-			serverRoutine(serverDemandTermination, serverConfirmTermination)
+			serverRoutine(serverChildToParent, serverParentToChild)
 		})
 
 		// logger routine collects logs
 		wg.Go(func() {
-			loggerRoutine(loggerDemandTermination, loggerConfirmTermination)
+			loggerRoutine(loggerChildToParent, loggerParentToChild)
 		})
 
 		// database routine cleans up database and files periodically
-		//wg.Go(databaseRoutine(fileWriteStarted, fileWriteFinished))
+		//wg.Go(databaseRoutine(databaseChildToParent, databaseParentToChild))
 	}
 
 	// handle child goroutines terminating
 	{
+        exitCode = 0
+		var sig Signal
 		select {
-		case <-loggerDemandTermination:
-			serverDemandTermination <- true
-			<-serverConfirmTermination
+		case sig = <-loggerChildToParent:
+			if sig.IsResponse() {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
 
-			loggerConfirmTermination <- true
+			if sig.Kind == SignalRestart {
+				loggerParentToChild <- NewSignal(SignalRestart, SignalAccept)
+			} else if sig.Kind == SignalTerminate {
+				serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-serverChildToParent
+				close(log)
+				loggerParentToChild <- NewSignal(SignalTerminate, SignalAccept)
+			} else {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
 
-		case <-serverDemandTermination:
-			serverConfirmTermination <- true
+            exitCode = 11
 
-			loggerDemandTermination <- true
-			<-loggerConfirmTermination
+		case sig = <-serverChildToParent:
+			if sig.IsResponse() {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
+
+			if sig.Kind == SignalTerminate {
+				serverParentToChild <- NewSignal(sig.Kind, SignalAccept)
+				close(log)
+				loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-loggerChildToParent
+			} else {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
+
+            exitCode = 12
 
 			// Make sure we respond to demands to termiante correctly
 			//case <- time.After(1 * time.Second):
-			//fmt.Println("Time to exit logger")
-			//serverDemandTermination <- true
-			//<- serverConfirmTermination
 			//fmt.Println("Time to exit server")
-			//loggerDemandTermination <- true
-			//<- loggerConfirmTermination
+			//serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			//<- serverChildToParent
+			//fmt.Println("Time to exit logger")
+			//loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			//<- loggerChildToParent
 			//fmt.Println("All exited")
 		}
 	}
 
 	// wait for all goroutines to finished
 	wg.Wait()
+
+	//Using defer with os.Root.Close() causes panic
+	//Possible bug considering os.Root is still very new?!?
+	//Either way, no panic this way.
+	cfg.directory.Close()
+
+    // Exit using code we set
+    os.Exit(exitCode)
 }
