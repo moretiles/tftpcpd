@@ -53,7 +53,7 @@ func (event logEvent) String() string {
 		event.message)
 }
 
-func loggerRoutine(demandTermination, confirmTermination chan bool) {
+func loggerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	normalMessageLog := os.Stdout
 	debugMessageLog := os.Stderr
 	errorMessageLog := os.Stderr
@@ -72,6 +72,10 @@ func loggerRoutine(demandTermination, confirmTermination chan bool) {
 	}
 	if normalMessageLogError != nil || debugMessageLogError != nil || errorMessageLogError != nil {
 		fmt.Fprintln(os.Stderr, "Unable to open one or more files logging was requested to")
+		childToParent <- NewSignal(SignalTerminate, SignalRequest)
+		<-parentToChild
+
+		return
 	}
 
 	for true {
@@ -79,26 +83,34 @@ func loggerRoutine(demandTermination, confirmTermination chan bool) {
 		case event, isOpen := <-log:
 			if !isOpen {
 				// signal to main that we want to terminate this routine and all others
-				demandTermination <- true
-				<-confirmTermination
+				childToParent <- NewSignal(SignalTerminate, SignalRequest)
+				<-parentToChild
 
 				return
 			} else {
-				switch event.kind {
-				case normalMsg:
-					fmt.Fprintln(normalMessageLog, event)
-				case debugMsg:
-					fmt.Fprintln(debugMessageLog, event)
-				case errorMsg:
-					fmt.Fprintln(errorMessageLog, event)
-				default:
-					log <- newErrorEvent("LOGGER", fmt.Sprintf("Malformed log partial: %v", event.message))
-				}
+				writeEventToLog(event, normalMessageLog, debugMessageLog, errorMessageLog)
 			}
-		case <-demandTermination:
-			confirmTermination <- true
-
-			return
+		default:
+			select {
+			case sig := <-parentToChild:
+				childToParent <- NewSignal(sig.Kind, SignalAccept)
+				return
+			default:
+				// pass
+			}
 		}
+	}
+}
+
+func writeEventToLog(event logEvent, normalMessageLog, debugMessageLog, errorMessageLog *os.File) {
+	switch event.kind {
+	case normalMsg:
+		fmt.Fprintln(normalMessageLog, event)
+	case debugMsg:
+		fmt.Fprintln(debugMessageLog, event)
+	case errorMsg:
+		fmt.Fprintln(errorMessageLog, event)
+	default:
+		log <- newErrorEvent("LOGGER", fmt.Sprintf("Malformed log partial: %v", event.message))
 	}
 }

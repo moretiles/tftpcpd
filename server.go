@@ -4,67 +4,11 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"reflect"
 	"sync"
 	"time"
 )
 
-func echoRoutine(demandTermination chan bool, confirmTermination chan bool) {
-	// 0xffff is maximum possible in-transit packet size with TFTP
-	var incoming []byte = make([]byte, 0xffff)
-
-	// bind to cfg.address
-	addr, err := net.ResolveUDPAddr("udp", cfg.address)
-	if err != nil {
-		log <- newErrorEvent("ECHO", fmt.Sprintf("Unable to resolve address: %v", cfg.address))
-
-		demandTermination <- true
-		<-confirmTermination
-
-		return
-	}
-
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		log <- newErrorEvent("ECHO", fmt.Sprintf("Unable to bind to address: %v", cfg.address))
-
-		demandTermination <- true
-		<-confirmTermination
-
-		return
-	}
-	defer conn.Close()
-
-	for true {
-		conn.SetReadDeadline(time.Now().Add(time.Second))
-		n, _, err := conn.ReadFromUDP(incoming)
-
-		select {
-		case <-demandTermination:
-			confirmTermination <- true
-
-			return
-		default:
-			// no need to stop
-		}
-
-		if os.IsTimeout(err) {
-			continue
-		}
-
-		log <- newDebugEvent("ECHO", fmt.Sprintf("Got bytes %v", incoming[:n]))
-		message, err := BytesAsMessage(incoming[:n])
-		if err != nil {
-			fmt.Println("Error turning bytes into message")
-			log <- newErrorEvent("ECHO", "Error turning bytes into message")
-			continue
-		}
-
-		log <- newDebugEvent("ECHO", fmt.Sprintf("Got message of type %v", reflect.TypeOf(message)))
-	}
-}
-
-func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
+func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	var (
 		// 0xffff is maximum possible in-transit packet size with TFTP
 		incoming []byte = make([]byte, 0xffff)
@@ -74,16 +18,16 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
 	serverAddr, err := net.ResolveUDPAddr("udp", cfg.address)
 	if err != nil {
 		log <- newErrorEvent("SERVER", fmt.Sprintf("Unable to resolve address: %v", serverAddr.String()))
-		demandTermination <- true
-		<-confirmTermination
+		childToParent <- NewSignal(SignalTerminate, SignalRequest)
+		<-parentToChild
 		return
 	}
 
 	conn, err := net.ListenUDP("udp", serverAddr)
 	if err != nil {
 		log <- newErrorEvent("SERVER", fmt.Sprintf("Unable to bind to address: %v", cfg.address))
-		demandTermination <- true
-		<-confirmTermination
+		childToParent <- NewSignal(SignalTerminate, SignalRequest)
+		<-parentToChild
 		return
 	}
 	defer conn.Close()
@@ -95,8 +39,8 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
 		n, clientAddr, err := conn.ReadFromUDP(incoming)
 
 		select {
-		case <-demandTermination:
-			confirmTermination <- true
+		case sig := <-parentToChild:
+			childToParent <- NewSignal(sig.Kind, SignalAccept)
 			sessions.Wait()
 			return
 		default:
@@ -106,8 +50,8 @@ func serverRoutine(demandTermination chan bool, confirmTermination chan bool) {
 		if os.IsTimeout(err) {
 			continue
 		} else if err != nil {
-			demandTermination <- true
-			<-confirmTermination
+			childToParent <- NewSignal(SignalTerminate, SignalRequest)
+			<-parentToChild
 			sessions.Wait()
 			return
 		}
