@@ -28,7 +28,7 @@ Use the --help flag to learn about them.
 * Switch to more general "signal" channel for inter-goroutine coordination.
 
 ## Todo
-* Standardize errors.
-* Create simple TFTP client to use in testing. Plan will be to run parallel tests using my TFTP client and curl so I can know whether the client or server is at fault.
 * Prevent race condition when multiple users try to upload a file named the same thing.
 * Prevent race condition where out-of-date files are deleted while being read.
+* Create simple TFTP client to use in testing. Plan will be to run parallel tests using my TFTP client and curl so I can know whether the client or server is at fault.
+* Standardize errors.

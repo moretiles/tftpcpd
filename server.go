@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -34,6 +35,8 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 
 	log <- newNormalEvent("SERVER", fmt.Sprintf("Server successfully bound to: %v", serverAddr.String()))
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	for true {
 		conn.SetReadDeadline(time.Now().Add(time.Second))
 		n, clientAddr, err := conn.ReadFromUDP(incoming)
@@ -41,6 +44,7 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 		select {
 		case sig := <-parentToChild:
 			childToParent <- NewSignal(sig.Kind, SignalAccept)
+			cancel()
 			sessions.Wait()
 			return
 		default:
@@ -52,6 +56,7 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 		} else if err != nil {
 			childToParent <- NewSignal(SignalTerminate, SignalRequest)
 			<-parentToChild
+			cancel()
 			sessions.Wait()
 			return
 		}
@@ -62,12 +67,12 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 			continue
 		}
 
-		sessions.Go(func() { sessionRoutine(clientAddr, incomingCopy) })
+		sessions.Go(func() { sessionRoutine(ctx, clientAddr, incomingCopy) })
 	}
 }
 
-func sessionRoutine(destinationAddr *net.UDPAddr, bytes []byte) {
-	session, err := newTftpSession(destinationAddr)
+func sessionRoutine(ctx context.Context, destinationAddr *net.UDPAddr, bytes []byte) {
+	session, err := newTftpSession(ctx, destinationAddr)
 	if err != nil {
 		log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession: %v", err))
 	}

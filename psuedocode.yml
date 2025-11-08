@@ -14,13 +14,13 @@ Goroutines:
       Listen on channel for new packets. This handles actually performing TFTP communication for individual sessions.
 
 Tables:
-  Write_Requests:
-    Filename:
-    # might need to setup trimming for array to only keep, for example, five most recent records
-    Array:
-      Time_started_microseconds: # 0 means not set
-      Time_completed_microseconds: # 0 means not set
-  Available_Files: # only lists most recent version
-    Filename:
-    Time:
-    Mode:
+  files:
+  - files(name STRING, uploadStarted INT, uploadCompleted INT)
+  - Used to persistently store what files are available. Files that are being uploaded have a uploadCompleted time of 0.
+  - Multiple files with the same name will be stored so an index on filename will be made (since checking the max name among neighbors should take little time if there are few duplicates).
+  clientActivity:
+  - clientActivity(IP INT, filesDownloaded INT, filesUploaded INT, bytesDownloaded INT, bytesUploaded INT)
+  - Store information about clients.
+  fileActivity:
+  - fileActivity(name STRING, downloadsStarted INT, downloadsCompleted INT)
+  - Store information about clients.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -15,10 +16,8 @@ const (
 	addrString = "127.0.0.1:9876"
 )
 
-/*
- * Testing the functions used by the server is important.
- * The read and write functions, however, seem far easier to test using real TFTP clients
- */
+// Testing the functions used by the server is important.
+// The read and write functions, however, seem far easier to test using real TFTP clients
 
 func TestSessionReadFromFile(t *testing.T) {
 	// Create new session
@@ -27,7 +26,7 @@ func TestSessionReadFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolving %v failed\n", addrString)
 	}
-	session, err := newTftpSession(addr)
+	session, err := newTftpSession(context.TODO(), addr)
 	if err != nil {
 		t.Fatalf("Failed to create a new tftpSession\n")
 	}
@@ -69,7 +68,7 @@ func TestSessionWriteToFileFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolving %v failed\n", addrString)
 	}
-	session, err := newTftpSession(addr)
+	session, err := newTftpSession(context.TODO(), addr)
 	if err != nil {
 		t.Fatalf("Failed to create a new tftpSession\n")
 	}
@@ -117,7 +116,7 @@ func TestSessionWriteToFileSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolving %v failed\n", addrString)
 	}
-	session, err := newTftpSession(addr)
+	session, err := newTftpSession(context.TODO(), addr)
 	if err != nil {
 		t.Fatalf("Failed to create a new tftpSession\n")
 	}
@@ -214,7 +213,7 @@ func TestSessionFileToDataMessages(t *testing.T) {
 
 	// Initialize session and associated UDPConn
 	dataPath := "tests/data/TestSessionFileToDataMessages.bin"
-	session, err := newTftpSession(addr)
+	session, err := newTftpSession(context.TODO(), addr)
 	if err != nil {
 		t.Fatalf("newTftpSession failed to make connection\n")
 	}
@@ -253,7 +252,7 @@ func TestSessionWriteDataMessagesToFile(t *testing.T) {
 		t.Fatalf("Resolving %v failed\n", addrString)
 		return
 	}
-	session, err := newTftpSession(addr)
+	session, err := newTftpSession(context.TODO(), addr)
 	if err != nil {
 		t.Fatalf("Failed to create new tftpSession\n")
 	}
