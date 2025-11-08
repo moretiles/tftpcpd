@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,9 @@ const (
 )
 
 type tftpSession struct {
+	// context
+	ctx context.Context
+
 	// used for connection
 	destinationAddr *net.UDPAddr
 	destination     *net.UDPConn
@@ -45,9 +49,12 @@ type tftpSession struct {
 	mostRecentMessage     any
 }
 
-func newTftpSession(destination *net.UDPAddr) (tftpSession, error) {
+func newTftpSession(ctx context.Context, destination *net.UDPAddr) (tftpSession, error) {
 	var err error
 	var session tftpSession
+
+	// Do not derive new context
+	session.ctx = ctx
 
 	// Default values
 	session.blockSize = 512
@@ -150,11 +157,9 @@ func (session *tftpSession) overwriteSuccess(unixMicro int64) error {
 
 // inform database client succesfully uploaded entire file, mark it as available
 func (session *tftpSession) overwriteFailure(unixMicro int64) error {
-	/*
-	 * When err is nil then some error has prevented the file from being written as it should have been
-	 * When err is os.ErrClosed then overwriteSuccess has already been called and all is good
-	 * When err is any other error then something weird has happened
-	 */
+	// When err is nil then some error has prevented the file from being written as it should have been
+	// When err is os.ErrClosed then overwriteSuccess has already been called and all is good
+	// When err is any other error then something weird has happened
 	fileError := session.file.Close()
 	if errors.Is(fileError, os.ErrClosed) {
 		return nil
@@ -236,27 +241,31 @@ func (session *tftpSession) send() error {
 }
 
 func (session *tftpSession) receive() error {
-
-	// if we timeout then resend
+	// Allow ten timeouts, if we timeout then resend
 	for _ = range 10 {
-		// Add timeout
-		session.receiveBuf = session.receiveBuf[:session.blockSize+dataPreambleLength]
-		messageLength, addr, err := session.destination.ReadFromUDP(session.receiveBuf)
-		session.receiveBuf = session.receiveBuf[:messageLength]
-		if err != nil {
-			return err
+		select {
+		case <-session.ctx.Done():
+			return context.Canceled
+		default:
+			session.receiveBuf = session.receiveBuf[:session.blockSize+dataPreambleLength]
+            session.destination.SetReadDeadline(time.Now().Add(session.timeout))
+			messageLength, addr, err := session.destination.ReadFromUDP(session.receiveBuf)
+			session.receiveBuf = session.receiveBuf[:messageLength]
+			if err != nil {
+				return err
+			}
+			ip1, ip2 := addr.IP, session.destinationAddr.IP
+			port1, port2 := addr.Port, session.destinationAddr.Port
+			zone1, zone2 := addr.Zone, session.destinationAddr.Zone
+			if !ip1.Equal(ip2) || port1 != port2 || zone1 != zone2 {
+				return errors.New("Client changed ip/port... possible man in the middle attack?")
+			}
+			session.mostRecentMessage, err = BytesAsMessage(session.receiveBuf[:messageLength])
+			if err != nil {
+				return err
+			}
+			return nil
 		}
-		ip1, ip2 := addr.IP, session.destinationAddr.IP
-		port1, port2 := addr.Port, session.destinationAddr.Port
-		zone1, zone2 := addr.Zone, session.destinationAddr.Zone
-		if !ip1.Equal(ip2) || port1 != port2 || zone1 != zone2 {
-			return errors.New("Client changed ip/port... possible man in the middle attack?")
-		}
-		session.mostRecentMessage, err = BytesAsMessage(session.receiveBuf[:messageLength])
-		if err != nil {
-			return err
-		}
-		return nil
 	}
 
 	return errors.New("Client connection (likely) dead")
@@ -626,11 +635,9 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 				options["timeout"] = valueAscii
 			}
 		case "tsize":
+			// tsize of 0 as in read request is special
+			// server responds in optionAcknowledge message with size of file
 			if valueInt == 0 {
-				/*
-				 * tsize of 0 as tsize in read request is special
-				 * server responds in optionAcknowledge message with size of file
-				 */
 				if session.opcode == opcodeReadByte {
 					info, err := cfg.directory.Lstat(session.filename)
 					if err != nil {

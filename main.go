@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	//"net"
 	"os"
+	"os/signal"
 	//"reflect"
 	"sync"
 	//"time"
@@ -63,8 +64,9 @@ func main() {
 		//databaseChildToParent chan Signal = make(chan Signal, 2)
 		//fileWriteStarted  chan string   = make(chan string)
 		//fileWriteFinished chan string   = make(chan string)
-		wg sync.WaitGroup
-        exitCode int
+		interruptHandler chan os.Signal = make(chan os.Signal, 2)
+		wg               sync.WaitGroup
+		exitCode         int
 	)
 	defer close(loggerParentToChild)
 	defer close(loggerChildToParent)
@@ -74,6 +76,7 @@ func main() {
 	//defer close(databaseChildToParent)
 	//defer close(fileWriteStarted)
 	//defer close(fileWriteFinished)
+	defer close(interruptHandler)
 
 	// setup configuration using commandline arguments
 	{
@@ -126,12 +129,11 @@ func main() {
 		}
 	}
 
-	// start goroutines
+	// inform user how to exit and start goroutines
 	{
-		// echo routine simple prototype build when designing system
-		//wg.Go(func() {
-		//echoRoutine(serverDemandTermination, serverConfirmTermination, log)
-		//})
+		// It is a near-certainty this messagw will appear before any logs
+		// good enough!
+		fmt.Println("Press Control-C (^C) to exit!")
 
 		// server routine handles actual tftp connections made by clients
 		wg.Go(func() {
@@ -147,12 +149,19 @@ func main() {
 		//wg.Go(databaseRoutine(databaseChildToParent, databaseParentToChild))
 	}
 
-	// handle child goroutines terminating
+	// handle child goroutines terminating and signals
 	{
-        exitCode = 0
-		var sig Signal
+		exitCode = 0
+		signal.Notify(interruptHandler, os.Interrupt)
 		select {
-		case sig = <-loggerChildToParent:
+		case <-interruptHandler:
+			serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			<-serverChildToParent
+			loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			<-loggerChildToParent
+
+			// do not modify exit code because this is the expected termination method
+		case sig := <-loggerChildToParent:
 			if sig.IsResponse() {
 				// impossible
 				panic("AHHHHHHHHHHHHHHHHHHH!")
@@ -170,9 +179,9 @@ func main() {
 				panic("AHHHHHHHHHHHHHHHHHHH!")
 			}
 
-            exitCode = 11
+			exitCode = 11
 
-		case sig = <-serverChildToParent:
+		case sig := <-serverChildToParent:
 			if sig.IsResponse() {
 				// impossible
 				panic("AHHHHHHHHHHHHHHHHHHH!")
@@ -188,7 +197,7 @@ func main() {
 				panic("AHHHHHHHHHHHHHHHHHHH!")
 			}
 
-            exitCode = 12
+			exitCode = 12
 
 			// Make sure we respond to demands to termiante correctly
 			//case <- time.After(1 * time.Second):
@@ -210,6 +219,6 @@ func main() {
 	//Either way, no panic this way.
 	cfg.directory.Close()
 
-    // Exit using code we set
-    os.Exit(exitCode)
+	// Exit using code we set
+	os.Exit(exitCode)
 }
