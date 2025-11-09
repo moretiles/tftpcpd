@@ -248,7 +248,7 @@ func (session *tftpSession) receive() error {
 			return context.Canceled
 		default:
 			session.receiveBuf = session.receiveBuf[:session.blockSize+dataPreambleLength]
-            session.destination.SetReadDeadline(time.Now().Add(session.timeout))
+			session.destination.SetReadDeadline(time.Now().Add(session.timeout))
 			messageLength, addr, err := session.destination.ReadFromUDP(session.receiveBuf)
 			session.receiveBuf = session.receiveBuf[:messageLength]
 			if err != nil {
