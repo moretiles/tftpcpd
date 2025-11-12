@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -27,8 +28,8 @@ type tftpSession struct {
 	receiveBuf      []byte
 
 	// set when opening file
-	file     *os.File
-	unixNano int64
+	file      *os.File
+	unixMicro int64
 
 	// set when connection established
 	opcode   uint16
@@ -89,51 +90,111 @@ func (session *tftpSession) lastSentMessageType() uint16 {
 	return uint16(session.sendBuf[1])
 }
 
-// add self to list of readers for the most recent version of filename
+// open file and increment consumers attached to that file
 func (session *tftpSession) reserve() (int64, error) {
-	// TODO:
+	var model fileModel = newFileModel()
+
 	// Acquire write lock on global map
+	tx, err := db.BeginTx(session.ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: false})
+	if err != nil {
+		return 0, err
+	}
 
-	// Temporary code unixMicro should be the most recent timestamp read
-	unixMicro := time.Now().UnixMicro()
-	// Eventual
-	//unixMicro := database.GetMostRecent(given: filename)
+	stmt := tx.Stmt(reserveStatementRead)
+	row := stmt.QueryRow(session.filename)
+	err = model.scanRow(row)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	unixMicro := model.timeStarted
 
-	// Use the global map to get the linked list for the filename requested and append to the end the timestamp being reserved
-	// Release lock
+	stmt = tx.Stmt(reserveStatementWrite)
+	_, err = stmt.Exec(session.filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	unixMicro = model.timeStarted
 
-	file, err := cfg.directory.Open(session.filename)
+	err = tx.Commit()
+	if err != nil {
+		return 0, err
+	}
+
+	file, err := cfg.directory.Open(model.Path())
 	if err != nil {
 		return 0, err
 	}
 	session.file = file
 
-	return unixMicro, err
+	return unixMicro, nil
 }
 
-// remove self from list of readers attached what was the most recent version of filename at session.unixMicro
+// close file and decrement consumers attached to that file.
+// called from within sessionRoutine because both when loading options
+// or responding to a read request we may open a file for the first time.
 func (session *tftpSession) release(unixMicro int64) error {
+	var model fileModel = newFileModel()
+
+	// file may be nil, means nothing was ever opened
+	if session.file == nil {
+		return nil
+	}
+
 	session.file.Close()
 
-	// TODO:
-	// Acquire write lock on global map
+	tx, err := db.BeginTx(session.ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: false})
+	if err != nil {
+		return err
+	}
 
-	//iterate over linked list and delete first value that is unixMicro
-	//should be at or near the start so quick lookup
+	stmt := tx.Stmt(releaseStatementRead)
+	row := stmt.QueryRow(session.filename)
+	err = model.scanRow(row)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	_ = model.timeStarted
 
-	// Release lock
+	stmt = tx.Stmt(releaseStatementWrite)
+	_, err = stmt.Exec(session.filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
 
 // inform databse we want to begin writing a version of filename and get a time attached to it
 func (session *tftpSession) prepare() (int64, error) {
+	var model fileModel = newFileModel()
+
+	tx, err := db.BeginTx(session.ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: false})
+	if err != nil {
+		return 0, err
+	}
 	unixMicro := time.Now().UnixMicro()
+	stmt := tx.Stmt(prepareStatement)
+	_, err = stmt.Exec(session.filename, unixMicro)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return 0, err
+	}
 
-	// TODO:
-	// Tell database to create entry for filename with the writeStarted time equal to unixMicro and writeEnded time equal to 0
-
-	file, err := cfg.directory.Create(session.filename)
+	model = newFileModelWith(session.filename, unixMicro, 0, 0)
+	file, err := cfg.directory.Create(model.Path())
 	if err != nil {
 		return 0, err
 	}
@@ -149,8 +210,21 @@ func (session *tftpSession) overwriteSuccess(unixMicro int64) error {
 		return err
 	}
 
-	// TODO:
-	// Tell database to fetch the record where name = filename AND writeStarted = unixMicro, then update timeEnded to time.Now()
+	tx, err := db.BeginTx(session.ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	stmt := tx.Stmt(overwriteSuccessStatement)
+	uploadCompleted := time.Now().UnixMicro()
+	_, err = stmt.Exec(uploadCompleted, session.filename, unixMicro)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -163,13 +237,26 @@ func (session *tftpSession) overwriteFailure(unixMicro int64) error {
 	fileError := session.file.Close()
 	if errors.Is(fileError, os.ErrClosed) {
 		return nil
+	} else if fileError != nil {
+		return fileError
 	}
 
-	// TODO:
-	// Tell database to remove the record where name = filename AND writeStarted = unixMicro
-	// Then delete the partially written file
+	tx, err := db.BeginTx(session.ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	stmt := tx.Stmt(overwriteFailureStatement)
+	_, err = stmt.Exec(session.filename, unixMicro)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
 
-	return fileError
+	return nil
 }
 
 func (session *tftpSession) readFile() error {
@@ -245,7 +332,7 @@ func (session *tftpSession) receive() error {
 	for _ = range 10 {
 		select {
 		case <-session.ctx.Done():
-			return context.Canceled
+			return context.Cause(session.ctx)
 		default:
 			session.receiveBuf = session.receiveBuf[:session.blockSize+dataPreambleLength]
 			session.destination.SetReadDeadline(time.Now().Add(session.timeout))
@@ -336,6 +423,7 @@ func (session *tftpSession) optionAcknowledgeMessage() error {
 // check client options to see if they are valid
 func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 	var err error
+	var errPtr *error = &err
 
 	session.mostRecentMessage, err = BytesAsMessage(bytes)
 
@@ -343,10 +431,15 @@ func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 	case readMessage:
 		session.opcode = opcodeReadByte
 		session.filename = session.mostRecentMessage.(readMessage).filename
-		_, err := cfg.directory.Lstat(session.filename)
+		session.unixMicro, err = session.reserve()
 		if err != nil {
-			return opcodeInvalid, errors.New(fmt.Sprintf("Client requested file does not exist: %v", session.filename))
+			return opcodeInvalid, errors.New("File does not exist!")
 		}
+		defer func() {
+			if *errPtr != nil {
+				session.release(session.unixMicro)
+			}
+		}()
 		session.mode = session.mostRecentMessage.(readMessage).mode
 		err = session.updateOptions(session.mostRecentMessage.(readMessage).options)
 		if err != nil {
@@ -372,7 +465,7 @@ func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 	}
 
 	if len(session.options) > 0 {
-		if session.optionAcknowledgeMessage() != nil {
+		if err = session.optionAcknowledgeMessage(); err != nil {
 			return opcodeInvalid, errors.New("Unable to send option acknowledgement to write request")
 		}
 	}
@@ -382,8 +475,9 @@ func (session *tftpSession) establish(bytes []byte) (uint16, error) {
 
 func (session *tftpSession) read() error {
 	var readEverything bool = false
-	var unixMicro int64
 	var err error
+
+	defer session.release(session.unixMicro)
 
 	// If the client asked for options we may have already sent an options acknowledge message
 	// If we have just sent an options acknowledgement message we need to operate on the client's acknowledgement message
@@ -430,13 +524,8 @@ func (session *tftpSession) read() error {
 	if cfg.debug {
 		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Reserving %v", session.filename))
 	}
-	unixMicro, err = session.reserve()
-	if err != nil {
-		return err
-	}
-	defer session.release(unixMicro)
 	if cfg.debug {
-		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Reserved %v with file time %v", session.filename, unixMicro))
+		log <- newDebugEvent(session.destinationAddr.String(), fmt.Sprintf("Reserved %v with file time %v", session.filename, session.unixMicro))
 	}
 
 	// for loop designed to deal with multiple possible client messages
@@ -639,7 +728,8 @@ func (session *tftpSession) updateOptions(options map[string]string) error {
 			// server responds in optionAcknowledge message with size of file
 			if valueInt == 0 {
 				if session.opcode == opcodeReadByte {
-					info, err := cfg.directory.Lstat(session.filename)
+					model := newFileModelWith(session.filename, session.unixMicro, 0, 0)
+					info, err := cfg.directory.Lstat(model.Path())
 					if err != nil {
 						return errors.New(fmt.Sprintf("Unable to get the size of %v", session.filename))
 					}

@@ -17,12 +17,13 @@ import (
 )
 
 type config struct {
-	// flags
-	directory   *os.Root
+	// behavior
 	memoryLimit int
 	debug       bool
 
-	// logs
+	// files
+	directory     *os.Root
+	sqlite3DBPath string
 	normalLogFile string
 	debugLogFile  string
 	errorLogFile  string
@@ -32,6 +33,61 @@ type config struct {
 
 	// used to check whether we are testing
 	testing *bool
+}
+
+// setup configuration using commandline arguments
+// no error returned because we exit early if there is a problem
+func processFlags() {
+	// Set flag.Usage to change default help message
+	oldFlagUsageFunction := flag.Usage
+	flag.Usage = func() { helpMessage(oldFlagUsageFunction) }
+
+	// behavior
+	var debug *bool = flag.Bool("debug", false, "enable debug mode")
+	var help *bool = flag.Bool("help", false, "print usage information")
+
+	// files
+	var directory *string = flag.String("directory", ".", "root directory of server")
+	var sqlite3DBPath *string = flag.String("sqlite3-db", "tftpcpd.db", "sqlite3 database")
+	var normalLogFile *string = flag.String("normal-log", "", "log file")
+	var debugLogFile *string = flag.String("debug-log", "", "debug log file")
+	var errorLogFile *string = flag.String("error-log", "", "error log file")
+
+	flag.Parse()
+
+	if *help {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	absoluteDirectory, err := filepath.Abs(*directory)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory as absolute path: %v ", *directory)))
+		os.Exit(1)
+	}
+	cfg.directory, err = os.OpenRoot(absoluteDirectory)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory: %v", absoluteDirectory)))
+		os.Exit(1)
+	}
+	log <- newNormalEvent("CONFIG", fmt.Sprintf("Ready to serve as root directory: %v", absoluteDirectory))
+
+	cfg.debug = *debug
+	cfg.sqlite3DBPath = *sqlite3DBPath
+	cfg.normalLogFile = *normalLogFile
+	cfg.debugLogFile = *debugLogFile
+	cfg.errorLogFile = *errorLogFile
+
+	args := flag.Args()
+
+	if len(args) == 0 {
+		cfg.address = "127.0.0.1:8173"
+	} else if len(args) == 1 {
+		cfg.address = args[0]
+	} else {
+		flag.Usage()
+		os.Exit(1)
+	}
 }
 
 func helpMessage(body func()) {
@@ -56,79 +112,36 @@ func init() {
 
 func main() {
 	var (
-		loggerParentToChild chan Signal = make(chan Signal, 2)
-		loggerChildToParent chan Signal = make(chan Signal, 2)
-		serverParentToChild chan Signal = make(chan Signal, 2)
-		serverChildToParent chan Signal = make(chan Signal, 2)
-		//databaseParentToChild chan Signal = make(chan Signal, 2)
-		//databaseChildToParent chan Signal = make(chan Signal, 2)
-		//fileWriteStarted  chan string   = make(chan string)
-		//fileWriteFinished chan string   = make(chan string)
-		interruptHandler chan os.Signal = make(chan os.Signal, 2)
-		wg               sync.WaitGroup
-		exitCode         int
+		loggerParentToChild   chan Signal    = make(chan Signal, 2)
+		loggerChildToParent   chan Signal    = make(chan Signal, 2)
+		serverParentToChild   chan Signal    = make(chan Signal, 2)
+		serverChildToParent   chan Signal    = make(chan Signal, 2)
+		databaseParentToChild chan Signal    = make(chan Signal, 2)
+		databaseChildToParent chan Signal    = make(chan Signal, 2)
+		interruptHandler      chan os.Signal = make(chan os.Signal, 2)
+		wg                    sync.WaitGroup
+		exitCode              int
 	)
+
+	//locals
 	defer close(loggerParentToChild)
 	defer close(loggerChildToParent)
 	defer close(serverParentToChild)
 	defer close(serverChildToParent)
-	//defer close(databaseParentToChild)
-	//defer close(databaseChildToParent)
-	//defer close(fileWriteStarted)
-	//defer close(fileWriteFinished)
+	defer close(databaseParentToChild)
+	defer close(databaseChildToParent)
 	defer close(interruptHandler)
 
-	// setup configuration using commandline arguments
-	{
-		// Set flag.Usage to change default help message
-		oldFlagUsageFunction := flag.Usage
-		flag.Usage = func() { helpMessage(oldFlagUsageFunction) }
-
-		var help *bool = flag.Bool("help", false, "print usage information")
-
-		var directory *string = flag.String("directory", ".", "root directory of server")
-
-		var debug *bool = flag.Bool("debug", false, "enable debug mode")
-		var normalLogFile *string = flag.String("normal-log", "", "log file")
-		var debugLogFile *string = flag.String("debug-log", "", "debug log file")
-		var errorLogFile *string = flag.String("error-log", "", "error log file")
-
-		flag.Parse()
-
-		if *help {
-			flag.Usage()
-			os.Exit(0)
-		}
-
-		absoluteDirectory, err := filepath.Abs(*directory)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory as absolute path: %v ", *directory)))
-			os.Exit(1)
-		}
-		cfg.directory, err = os.OpenRoot(absoluteDirectory)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory: %v", absoluteDirectory)))
-			os.Exit(1)
-		}
-		log <- newNormalEvent("CONFIG", fmt.Sprintf("Ready to serve as root directory: %v", absoluteDirectory))
-
-		cfg.debug = *debug
-		cfg.normalLogFile = *normalLogFile
-		cfg.debugLogFile = *debugLogFile
-		cfg.errorLogFile = *errorLogFile
-
-		args := flag.Args()
-
-		if len(args) == 0 {
-			cfg.address = "127.0.0.1:8173"
-		} else if len(args) == 1 {
-			cfg.address = args[0]
-		} else {
-			flag.Usage()
-			os.Exit(1)
-		}
+	processFlags()
+	if loggerInit() != nil {
+		os.Exit(4)
 	}
-
+	if databaseInit() != nil {
+		os.Exit(2)
+	}
+	if serverInit() != nil {
+		os.Exit(3)
+	}
 	// inform user how to exit and start goroutines
 	{
 		// It is a near-certainty this messagw will appear before any logs
@@ -146,7 +159,9 @@ func main() {
 		})
 
 		// database routine cleans up database and files periodically
-		//wg.Go(databaseRoutine(databaseChildToParent, databaseParentToChild))
+		wg.Go(func() {
+			databaseRoutine(databaseChildToParent, databaseParentToChild)
+		})
 	}
 
 	// handle child goroutines terminating and signals
@@ -157,6 +172,9 @@ func main() {
 		case <-interruptHandler:
 			serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
 			<-serverChildToParent
+			databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			<-databaseChildToParent
+			close(log)
 			loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
 			<-loggerChildToParent
 
@@ -172,6 +190,8 @@ func main() {
 			} else if sig.Kind == SignalTerminate {
 				serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
 				<-serverChildToParent
+				databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-databaseChildToParent
 				close(log)
 				loggerParentToChild <- NewSignal(SignalTerminate, SignalAccept)
 			} else {
@@ -189,6 +209,8 @@ func main() {
 
 			if sig.Kind == SignalTerminate {
 				serverParentToChild <- NewSignal(sig.Kind, SignalAccept)
+				databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-databaseChildToParent
 				close(log)
 				loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
 				<-loggerChildToParent
@@ -198,6 +220,24 @@ func main() {
 			}
 
 			exitCode = 12
+
+		case sig := <-databaseChildToParent:
+			if sig.IsResponse() {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
+
+			if sig.Kind == SignalTerminate {
+				serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-serverChildToParent
+				databaseParentToChild <- NewSignal(sig.Kind, SignalAccept)
+				close(log)
+				loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				<-loggerChildToParent
+			} else {
+				// impossible
+				panic("AHHHHHHHHHHHHHHHHHHH!")
+			}
 
 			// Make sure we respond to demands to termiante correctly
 			//case <- time.After(1 * time.Second):

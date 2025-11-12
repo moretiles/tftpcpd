@@ -15,11 +15,17 @@ tags
 /.b4.lock
 
 # ignore temporary test data
+/tests/tmp/*.[0-9]*
 /tests/tmp/*.bin
+/tests/root/*.[0-9]*
 /tests/root/*.bin
 
 # executable
 /out/tftpcpd*
+/tftpcpd
+
+# temporary database
+/tftpcpd.db
 
 # don't track darwin headers
 /MacOSX_SDK
