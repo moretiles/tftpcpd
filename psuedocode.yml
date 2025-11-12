@@ -15,9 +15,10 @@ Goroutines:
 
 Tables:
   files:
-  - files(name STRING, uploadStarted INT, uploadCompleted INT)
+  - files(name STRING, uploadStarted INT, uploadCompleted INT, consumers INT)
   - Used to persistently store what files are available. Files that are being uploaded have a uploadCompleted time of 0.
   - Multiple files with the same name will be stored so an index on filename will be made (since checking the max name among neighbors should take little time if there are few duplicates).
+  - Consumers identifies how many clients are currently trying to download the file.
   clientActivity:
   - clientActivity(IP INT, filesDownloaded INT, filesUploaded INT, bytesDownloaded INT, bytesUploaded INT)
   - Store information about clients.

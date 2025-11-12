@@ -53,6 +53,10 @@ func (event logEvent) String() string {
 		event.message)
 }
 
+func loggerInit() error {
+	return nil
+}
+
 func loggerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	normalMessageLog := os.Stdout
 	debugMessageLog := os.Stderr

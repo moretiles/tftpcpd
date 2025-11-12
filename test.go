@@ -18,4 +18,15 @@ func init() {
 	if err != nil {
 		fmt.Println("Failed to setup environment for tests")
 	}
+	cfg.sqlite3DBPath = "tftpcpd.db"
+
+	if loggerInit() != nil {
+		os.Exit(4)
+	}
+	if databaseInit() != nil {
+		os.Exit(2)
+	}
+	if serverInit() != nil {
+		os.Exit(3)
+	}
 }
