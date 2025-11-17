@@ -17,6 +17,13 @@ const (
 	DataPreambleLength = 4
 )
 
+const (
+	ReadAsClient = iota
+	WriteAsClient
+	ReadAsServer
+	WriteAsServer
+)
+
 type TftpSession struct {
 	// context
 	Ctx context.Context
@@ -32,10 +39,10 @@ type TftpSession struct {
 	UnixMicro int64
 
 	// set when connection established
-	Opcode   uint16
-	Filename string
-	Mode     string
-	Options  map[string]string
+	Operation uint16
+	Filename  string
+	Mode      string
+	Options   map[string]string
 
 	// set when negotiating options
 	BlockSize    uint16
@@ -358,6 +365,36 @@ func (session *TftpSession) Receive() error {
 	return errors.New("Client connection (likely) dead")
 }
 
+// create and send read message to server
+func (session *TftpSession) ReadMessage(filename string, options map[string]string) error {
+	// netascii is a nop
+	mode := "octal"
+
+	err := MessageAsBytes(NewReadMessage(filename, mode, options), &(session.SendBuf))
+	if err != nil {
+		return err
+	}
+
+	session.Filename = filename
+	session.Options = options
+	return session.Send()
+}
+
+// create and send write message to server
+func (session *TftpSession) WriteMessage(filename string, options map[string]string) error {
+	// netascii is a nop
+	mode := "octal"
+
+	err := MessageAsBytes(NewWriteMessage(filename, mode, options), &(session.SendBuf))
+	if err != nil {
+		return err
+	}
+
+	session.Filename = filename
+	session.Options = options
+	return session.Send()
+}
+
 // create and send data message to client
 func (session *TftpSession) DataMessage() error {
 	// session.SendBuf used to store loaded data so special care taken to avoid unneeded secondary write
@@ -423,60 +460,77 @@ func (session *TftpSession) OptionAcknowledgeMessage() error {
 // check client options to see if they are valid
 func (session *TftpSession) Accept(bytes []byte) (uint16, error) {
 	var err error
-	var errPtr *error = &err
 
 	session.MostRecentMessage, err = BytesAsMessage(bytes)
+	if err != nil {
+		return OpcodeInvalid, errors.New("Client sent unknown message type when opening connecting")
+	}
 
 	switch session.MostRecentMessage.(type) {
 	case ReadMessage:
-		session.Opcode = OpcodeReadByte
+		session.Operation = ReadAsServer
 		session.Filename = session.MostRecentMessage.(ReadMessage).Filename
-		session.UnixMicro, err = session.Reserve()
-		if err != nil {
-			return OpcodeInvalid, errors.New("File does not exist!")
-		}
-		defer func() {
-			if *errPtr != nil {
-				session.Release(session.UnixMicro)
-			}
-		}()
 		session.Mode = session.MostRecentMessage.(ReadMessage).Mode
-		err = session.UpdateOptions(session.MostRecentMessage.(ReadMessage).Options)
-		if err != nil {
-			session.ErrorMessage(ErrorCodeUndefined, "One or more options contain invalid values")
-			return OpcodeInvalid, errors.New("One or more options contain invalid values")
-		}
-		session.Options = session.MostRecentMessage.(ReadMessage).Options
 
 	case WriteMessage:
-		session.Opcode = OpcodeWriteByte
+		session.Operation = WriteAsServer
 		session.Filename = session.MostRecentMessage.(WriteMessage).Filename
 		session.Mode = session.MostRecentMessage.(WriteMessage).Mode
-		err = session.UpdateOptions(session.MostRecentMessage.(WriteMessage).Options)
-		if err != nil {
-			session.ErrorMessage(ErrorCodeUndefined, "One or more options contain invalid values")
-			return OpcodeInvalid, errors.New("One or more options contain invalid values")
-		}
-		session.Options = session.MostRecentMessage.(WriteMessage).Options
 
 	default:
 		session.ErrorMessage(ErrorCodeIllegalOperation, "Client requested invalid operation when opening connection")
 		return OpcodeInvalid, errors.New("Client requested invalid operation when opening connection")
 	}
 
-	if len(session.Options) > 0 {
-		if err = session.OptionAcknowledgeMessage(); err != nil {
-			return OpcodeInvalid, errors.New("Unable to send option acknowledgement to write request")
-		}
-	}
-
-	return session.Opcode, nil
+	return session.Operation, nil
 }
 
-func (session *TftpSession) Read() error {
+// add heldMessage argument to receiveDataLoop and sendDataLoop
+// add field to session used to check whether session is acting as a server or client
+
+/*
+func (session *TftpSession) ReadAsClient(filename string, options map[string]string) error {
+    var err error
+
+    if err = session.ReadMessage(); err != nil {
+        session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
+        Log <- NewErrorEvent(session.DestinationAddr.String(), fmt.Sprintf("Session routine failed to accept: %v", err)
+        return err
+    }
+
+    // set tsize is 0 in order to get the expected  size from the server
+    //  call receive right now making the assumption to handle options {
+    //    :server_does => compare those options with current set options and send ack if they are good
+    //    :server_does_not => proceed to receiveDataLoop
+    //  }
+    //
+    //  open file (no need for worrying about filemodel
+    //  defer file.Close()
+    //
+    //  call receiveDataLoop using new `heldMessage` argument used to indicate we already hold some message
+}
+*/
+
+func (session *TftpSession) ReadAsServer() error {
 	var err error
 
+	session.UnixMicro, err = session.Reserve()
+	if err != nil {
+		return errors.New("File does not exist!")
+	}
 	defer session.Release(session.UnixMicro)
+
+	err = session.UpdateOptions(session.MostRecentMessage.(ReadMessage).Options)
+	if err != nil {
+		session.ErrorMessage(ErrorCodeUndefined, "One or more options contain invalid values")
+		return errors.New("One or more options contain invalid values")
+	}
+
+	if len(session.Options) > 0 {
+		if err = session.OptionAcknowledgeMessage(); err != nil {
+			return errors.New("Unable to send option acknowledgement to write request")
+		}
+	}
 
 	// If the client asked for options we may have already sent an options acknowledge message
 	// If we have just sent an options acknowledgement message we need to operate on the client's acknowledgement message
@@ -609,9 +663,26 @@ func (session *TftpSession) SendDataLoop() error {
 	return nil
 }
 
-func (session *TftpSession) Write() error {
+func (session *TftpSession) WriteAsServer() error {
 	var unixMicro int64
 	var err error
+
+	err = session.UpdateOptions(session.MostRecentMessage.(WriteMessage).Options)
+	if err != nil {
+		session.ErrorMessage(ErrorCodeUndefined, "One or more options contain invalid values")
+		return errors.New("One or more options contain invalid values")
+	}
+
+	// acknowledgement message with block number 0 used to indicate accepting write when options are empty
+	session.BlockNumber = 0
+
+	if len(session.Options) > 0 {
+		if err = session.OptionAcknowledgeMessage(); err != nil {
+			return errors.New("Unable to send option acknowledgement to write request")
+		}
+	} else if err = session.AcknowledgeMessage(); err != nil {
+		return errors.New("Unable to send acknowledgement to write request")
+	}
 
 	// we expect that client will acknowledge first data block with 1
 	session.BlockNumber = 1
@@ -748,7 +819,7 @@ func (session *TftpSession) UpdateOptions(options map[string]string) error {
 			// tsize of 0 as in read request is special
 			// server responds in optionAcknowledge message with size of file
 			if valueInt == 0 {
-				if session.Opcode == OpcodeReadByte {
+				if session.Operation == ReadAsServer {
 					model := newFileModelWith(session.Filename, session.UnixMicro, 0, 0)
 					info, err := Cfg.Directory.Lstat(model.Path())
 					if err != nil {
@@ -776,6 +847,8 @@ func (session *TftpSession) UpdateOptions(options map[string]string) error {
 			continue
 		}
 	}
+
+	session.Options = options
 
 	return nil
 }

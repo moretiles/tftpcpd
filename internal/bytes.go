@@ -368,15 +368,16 @@ func bytesAsWriteMessage(buf []byte) (WriteMessage, error) {
 
 	mode, err = popNullString(&buf)
 	mode = strings.ToLower(mode)
-	if !errors.Is(err, io.EOF) {
-		options, err = bytesAsOptionMap(buf)
-		if err != nil {
-			return WriteMessage{}, err
-		}
+	if errors.Is(err, io.EOF) {
+		return NewWriteMessage(filename, mode, options), nil
 	} else if err != nil {
 		return WriteMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
+	options, err = bytesAsOptionMap(buf)
+	if err != nil {
+		return WriteMessage{}, err
+	}
 	return NewWriteMessage(filename, mode, options), nil
 }
 
