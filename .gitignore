@@ -21,11 +21,12 @@ tags
 /tests/root/*.bin
 
 # executable
-/out/tftpcpd*
+/dist/tftpcpd*
 /tftpcpd
 
-# temporary database
+# database and test database
 /tftpcpd.db
+/test.tftpcpd.db
 
 # don't track darwin headers
 /MacOSX_SDK

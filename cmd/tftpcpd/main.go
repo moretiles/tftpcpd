@@ -14,26 +14,8 @@ import (
 	//"strings"
 	_ "database/sql"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/moretiles/tftpcpd/internal"
 )
-
-type config struct {
-	// behavior
-	memoryLimit int
-	debug       bool
-
-	// files
-	directory     *os.Root
-	sqlite3DBPath string
-	normalLogFile string
-	debugLogFile  string
-	errorLogFile  string
-
-	// args
-	address string
-
-	// used to check whether we are testing
-	testing *bool
-}
 
 // setup configuration using commandline arguments
 // no error returned because we exit early if there is a problem
@@ -62,28 +44,28 @@ func processFlags() {
 
 	absoluteDirectory, err := filepath.Abs(*directory)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory as absolute path: %v ", *directory)))
+		fmt.Fprintln(os.Stderr, internal.NewErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory as absolute path: %v ", *directory)))
 		os.Exit(1)
 	}
-	cfg.directory, err = os.OpenRoot(absoluteDirectory)
+	internal.Cfg.Directory, err = os.OpenRoot(absoluteDirectory)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, newErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory: %v", absoluteDirectory)))
+		fmt.Fprintln(os.Stderr, internal.NewErrorEvent("CONFIG", fmt.Sprintf("Unable to open root directory: %v", absoluteDirectory)))
 		os.Exit(1)
 	}
-	log <- newNormalEvent("CONFIG", fmt.Sprintf("Ready to serve as root directory: %v", absoluteDirectory))
+	internal.Log <- internal.NewNormalEvent("CONFIG", fmt.Sprintf("Ready to serve as root directory: %v", absoluteDirectory))
 
-	cfg.debug = *debug
-	cfg.sqlite3DBPath = *sqlite3DBPath
-	cfg.normalLogFile = *normalLogFile
-	cfg.debugLogFile = *debugLogFile
-	cfg.errorLogFile = *errorLogFile
+	internal.Cfg.Debug = *debug
+	internal.Cfg.Sqlite3DBPath = *sqlite3DBPath
+	internal.Cfg.NormalLogFile = *normalLogFile
+	internal.Cfg.DebugLogFile = *debugLogFile
+	internal.Cfg.ErrorLogFile = *errorLogFile
 
 	args := flag.Args()
 
 	if len(args) == 0 {
-		cfg.address = "127.0.0.1:8173"
+		internal.Cfg.Address = "127.0.0.1:8173"
 	} else if len(args) == 1 {
-		cfg.address = args[0]
+		internal.Cfg.Address = args[0]
 	} else {
 		flag.Usage()
 		os.Exit(1)
@@ -107,18 +89,18 @@ func helpMessage(body func()) {
 }
 
 func init() {
-	cfg.testing = flag.Bool("testing", false, "Used to control special behavior required for running tests.")
+	internal.Cfg.Testing = flag.Bool("testing", false, "Used to control special behavior required for running tests.")
 }
 
 func main() {
 	var (
-		loggerParentToChild   chan Signal    = make(chan Signal, 2)
-		loggerChildToParent   chan Signal    = make(chan Signal, 2)
-		serverParentToChild   chan Signal    = make(chan Signal, 2)
-		serverChildToParent   chan Signal    = make(chan Signal, 2)
-		databaseParentToChild chan Signal    = make(chan Signal, 2)
-		databaseChildToParent chan Signal    = make(chan Signal, 2)
-		interruptHandler      chan os.Signal = make(chan os.Signal, 2)
+		loggerParentToChild   chan internal.Signal = make(chan internal.Signal, 2)
+		loggerChildToParent   chan internal.Signal = make(chan internal.Signal, 2)
+		serverParentToChild   chan internal.Signal = make(chan internal.Signal, 2)
+		serverChildToParent   chan internal.Signal = make(chan internal.Signal, 2)
+		databaseParentToChild chan internal.Signal = make(chan internal.Signal, 2)
+		databaseChildToParent chan internal.Signal = make(chan internal.Signal, 2)
+		interruptHandler      chan os.Signal       = make(chan os.Signal, 2)
 		wg                    sync.WaitGroup
 		exitCode              int
 	)
@@ -133,13 +115,13 @@ func main() {
 	defer close(interruptHandler)
 
 	processFlags()
-	if loggerInit() != nil {
+	if internal.LoggerInit() != nil {
 		os.Exit(4)
 	}
-	if databaseInit() != nil {
+	if internal.DatabaseInit() != nil {
 		os.Exit(2)
 	}
-	if serverInit() != nil {
+	if internal.ServerInit() != nil {
 		os.Exit(3)
 	}
 	// inform user how to exit and start goroutines
@@ -150,17 +132,17 @@ func main() {
 
 		// server routine handles actual tftp connections made by clients
 		wg.Go(func() {
-			serverRoutine(serverChildToParent, serverParentToChild)
+			internal.ServerRoutine(serverChildToParent, serverParentToChild)
 		})
 
 		// logger routine collects logs
 		wg.Go(func() {
-			loggerRoutine(loggerChildToParent, loggerParentToChild)
+			internal.LoggerRoutine(loggerChildToParent, loggerParentToChild)
 		})
 
 		// database routine cleans up database and files periodically
 		wg.Go(func() {
-			databaseRoutine(databaseChildToParent, databaseParentToChild)
+			internal.DatabaseRoutine(databaseChildToParent, databaseParentToChild)
 		})
 	}
 
@@ -170,12 +152,12 @@ func main() {
 		signal.Notify(interruptHandler, os.Interrupt)
 		select {
 		case <-interruptHandler:
-			serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			serverParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 			<-serverChildToParent
-			databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			databaseParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 			<-databaseChildToParent
-			close(log)
-			loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			close(internal.Log)
+			loggerParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 			<-loggerChildToParent
 
 			// do not modify exit code because this is the expected termination method
@@ -185,15 +167,15 @@ func main() {
 				panic("AHHHHHHHHHHHHHHHHHHH!")
 			}
 
-			if sig.Kind == SignalRestart {
-				loggerParentToChild <- NewSignal(SignalRestart, SignalAccept)
-			} else if sig.Kind == SignalTerminate {
-				serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			if sig.Kind == internal.SignalRestart {
+				loggerParentToChild <- internal.NewSignal(internal.SignalRestart, internal.SignalAccept)
+			} else if sig.Kind == internal.SignalTerminate {
+				serverParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-serverChildToParent
-				databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				databaseParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-databaseChildToParent
-				close(log)
-				loggerParentToChild <- NewSignal(SignalTerminate, SignalAccept)
+				close(internal.Log)
+				loggerParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalAccept)
 			} else {
 				// impossible
 				panic("AHHHHHHHHHHHHHHHHHHH!")
@@ -207,12 +189,12 @@ func main() {
 				panic("AHHHHHHHHHHHHHHHHHHH!")
 			}
 
-			if sig.Kind == SignalTerminate {
-				serverParentToChild <- NewSignal(sig.Kind, SignalAccept)
-				databaseParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			if sig.Kind == internal.SignalTerminate {
+				serverParentToChild <- internal.NewSignal(sig.Kind, internal.SignalAccept)
+				databaseParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-databaseChildToParent
-				close(log)
-				loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				close(internal.Log)
+				loggerParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-loggerChildToParent
 			} else {
 				// impossible
@@ -227,12 +209,12 @@ func main() {
 				panic("AHHHHHHHHHHHHHHHHHHH!")
 			}
 
-			if sig.Kind == SignalTerminate {
-				serverParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+			if sig.Kind == internal.SignalTerminate {
+				serverParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-serverChildToParent
-				databaseParentToChild <- NewSignal(sig.Kind, SignalAccept)
-				close(log)
-				loggerParentToChild <- NewSignal(SignalTerminate, SignalRequest)
+				databaseParentToChild <- internal.NewSignal(sig.Kind, internal.SignalAccept)
+				close(internal.Log)
+				loggerParentToChild <- internal.NewSignal(internal.SignalTerminate, internal.SignalRequest)
 				<-loggerChildToParent
 			} else {
 				// impossible
@@ -257,7 +239,7 @@ func main() {
 	//Using defer with os.Root.Close() causes panic
 	//Possible bug considering os.Root is still very new?!?
 	//Either way, no panic this way.
-	cfg.directory.Close()
+	internal.Cfg.Directory.Close()
 
 	// Exit using code we set
 	os.Exit(exitCode)

@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"fmt"
@@ -20,15 +20,15 @@ type logEvent struct {
 	message string
 }
 
-func newDebugEvent(from, message string) logEvent {
+func NewDebugEvent(from, message string) logEvent {
 	return logEvent{debugMsg, from, message}
 }
 
-func newNormalEvent(from, message string) logEvent {
+func NewNormalEvent(from, message string) logEvent {
 	return logEvent{normalMsg, from, message}
 }
 
-func newErrorEvent(from, message string) logEvent {
+func NewErrorEvent(from, message string) logEvent {
 	return logEvent{errorMsg, from, message}
 }
 
@@ -53,25 +53,25 @@ func (event logEvent) String() string {
 		event.message)
 }
 
-func loggerInit() error {
+func LoggerInit() error {
 	return nil
 }
 
-func loggerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
+func LoggerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	normalMessageLog := os.Stdout
 	debugMessageLog := os.Stderr
 	errorMessageLog := os.Stderr
 	var normalMessageLogError, debugMessageLogError, errorMessageLogError error
-	if cfg.normalLogFile != "" {
-		normalMessageLog, normalMessageLogError = os.OpenFile(cfg.normalLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+	if Cfg.NormalLogFile != "" {
+		normalMessageLog, normalMessageLogError = os.OpenFile(Cfg.NormalLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
 		defer normalMessageLog.Close()
 	}
-	if cfg.debugLogFile != "" {
-		debugMessageLog, debugMessageLogError = os.OpenFile(cfg.debugLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+	if Cfg.DebugLogFile != "" {
+		debugMessageLog, debugMessageLogError = os.OpenFile(Cfg.DebugLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
 		defer debugMessageLog.Close()
 	}
-	if cfg.errorLogFile != "" {
-		errorMessageLog, errorMessageLogError = os.OpenFile(cfg.errorLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+	if Cfg.ErrorLogFile != "" {
+		errorMessageLog, errorMessageLogError = os.OpenFile(Cfg.ErrorLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
 		defer errorMessageLog.Close()
 	}
 	if normalMessageLogError != nil || debugMessageLogError != nil || errorMessageLogError != nil {
@@ -84,7 +84,7 @@ func loggerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 
 	for true {
 		select {
-		case event, isOpen := <-log:
+		case event, isOpen := <-Log:
 			if !isOpen {
 				// signal to main that we want to terminate this routine and all others
 				childToParent <- NewSignal(SignalTerminate, SignalRequest)
@@ -115,6 +115,6 @@ func writeEventToLog(event logEvent, normalMessageLog, debugMessageLog, errorMes
 	case errorMsg:
 		fmt.Fprintln(errorMessageLog, event)
 	default:
-		log <- newErrorEvent("LOGGER", fmt.Sprintf("Malformed log partial: %v", event.message))
+		Log <- NewErrorEvent("LOGGER", fmt.Sprintf("Malformed log partial: %v", event.message))
 	}
 }

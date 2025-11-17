@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"context"
@@ -9,83 +9,83 @@ import (
 	"time"
 )
 
-func serverInit() error {
+func ServerInit() error {
 	var err error
 
 	// Increment the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value returning that row. The only parameter is filename.
-	reserveStatementRead, err = db.Prepare(`SELECT * FROM files WHERE
+	ReserveStatementRead, err = DB.Prepare(`SELECT * FROM files WHERE
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename )
         LIMIT 1;`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Increment the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value. The only parameter is filename.
-	reserveStatementWrite, err = db.Prepare(`UPDATE files SET consumers = consumers + 1 WHERE
+	ReserveStatementWrite, err = DB.Prepare(`UPDATE files SET consumers = consumers + 1 WHERE
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Decrement if greater than 0 the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value returning that row. The only parameter is filename.
-	releaseStatementRead, err = db.Prepare(`SELECT * FROM files WHERE
+	ReleaseStatementRead, err = DB.Prepare(`SELECT * FROM files WHERE
         consumers != 0 AND
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename )
         LIMIT 1;`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Decrement if greater than 0 the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value. The only parameter is filename.
-	releaseStatementWrite, err = db.Prepare(`UPDATE files SET consumers = consumers - 1 WHERE
+	ReleaseStatementWrite, err = DB.Prepare(`UPDATE files SET consumers = consumers - 1 WHERE
         consumers != 0 AND
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Create entry for filename at uploadedStarted where those are the parameters. uploadCompleted and consumers are 0 by default.
-	prepareStatement, err = db.Prepare(`INSERT INTO files(filename, uploadStarted, uploadCompleted, consumers) VALUES (?, ?, 0, 0);`)
+	PrepareStatement, err = DB.Prepare(`INSERT INTO files(filename, uploadStarted, uploadCompleted, consumers) VALUES (?, ?, 0, 0);`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Delete row created at the beginning of the upload because it failed. Parameters are filename and uploadStarted.
-	overwriteFailureStatement, err = db.Prepare(`DELETE FROM files WHERE filename = ? AND uploadStarted = ?;`)
+	OverwriteFailureStatement, err = DB.Prepare(`DELETE FROM files WHERE filename = ? AND uploadStarted = ?;`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	// Update row created at the beginning of the upload to reflect its success. Parameters are uploadCompleted, filename, and uploadStarted.
-	overwriteSuccessStatement, err = db.Prepare(`UPDATE files SET uploadCompleted = ? WHERE filename = ? AND uploadStarted = ?;`)
+	OverwriteSuccessStatement, err = DB.Prepare(`UPDATE files SET uploadCompleted = ? WHERE filename = ? AND uploadStarted = ?;`)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
 	return nil
 }
 
-func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
+func ServerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	var (
 		// 0xffff is maximum possible in-transit packet size with TFTP
 		incoming []byte = make([]byte, 0xffff)
 		sessions sync.WaitGroup
 	)
 
-	serverAddr, err := net.ResolveUDPAddr("udp", cfg.address)
+	serverAddr, err := net.ResolveUDPAddr("udp", Cfg.Address)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Unable to resolve address: %v", serverAddr.String()))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Unable to resolve address: %v", serverAddr.String()))
 		childToParent <- NewSignal(SignalTerminate, SignalRequest)
 		<-parentToChild
 		return
@@ -93,14 +93,14 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 
 	conn, err := net.ListenUDP("udp", serverAddr)
 	if err != nil {
-		log <- newErrorEvent("SERVER", fmt.Sprintf("Unable to bind to address: %v", cfg.address))
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Unable to bind to address: %v", Cfg.Address))
 		childToParent <- NewSignal(SignalTerminate, SignalRequest)
 		<-parentToChild
 		return
 	}
 	defer conn.Close()
 
-	log <- newNormalEvent("SERVER", fmt.Sprintf("Server successfully bound to: %v", serverAddr.String()))
+	Log <- NewNormalEvent("SERVER", fmt.Sprintf("Server successfully bound to: %v", serverAddr.String()))
 
 	// Prepare context and set prepared statements sessions goroutines need
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,7 +131,7 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 
 		incomingCopy := make([]byte, n)
 		if copy(incomingCopy, incoming[:n]) != n {
-			log <- newErrorEvent("SERVER", "Truncation error when reading message")
+			Log <- NewErrorEvent("SERVER", "Truncation error when reading message")
 			continue
 		}
 
@@ -140,49 +140,49 @@ func serverRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 }
 
 func sessionRoutine(ctx context.Context, destinationAddr *net.UDPAddr, bytes []byte) {
-	session, err := newTftpSession(ctx, destinationAddr)
+	session, err := NewTftpSession(ctx, destinationAddr)
 	if err != nil {
-		log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession: %v", err))
+		Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession: %v", err))
 	}
 	defer session.Close()
 
-	opcode, err := session.establish(bytes)
+	opcode, err := session.Accept(bytes)
 	if err != nil {
-		session.errorMessage(errorCodeUndefined, fmt.Sprintf("%v", err))
-		log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Session routine failed to establish: %v", err))
+		session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
+		Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Session routine failed to accept: %v", err))
 		return
 	}
 
 	switch opcode {
-	case opcodeReadByte:
-		log <- newNormalEvent(session.destinationAddr.String(), fmt.Sprintf("Client began download: %v", session.filename))
-		err = session.read()
-	case opcodeWriteByte:
-		log <- newNormalEvent(session.destinationAddr.String(), fmt.Sprintf("Client began upload: %v", session.filename))
-		err = session.write()
+	case OpcodeReadByte:
+		Log <- NewNormalEvent(session.DestinationAddr.String(), fmt.Sprintf("Client began download: %v", session.Filename))
+		err = session.Read()
+	case OpcodeWriteByte:
+		Log <- NewNormalEvent(session.DestinationAddr.String(), fmt.Sprintf("Client began upload: %v", session.Filename))
+		err = session.Write()
 	default:
-		session.errorMessage(errorCodeUndefined, "Client requested invalid operation")
-		log <- newErrorEvent(session.destinationAddr.String(), "Client requested invalid operation")
+		session.ErrorMessage(ErrorCodeUndefined, "Client requested invalid operation")
+		Log <- NewErrorEvent(session.DestinationAddr.String(), "Client requested invalid operation")
 		return
 	}
 
 	// log error
 	if err != nil {
 		switch opcode {
-		case opcodeReadByte:
-			log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed download: %v", err))
-		case opcodeWriteByte:
-			log <- newErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed upload: %v", err))
+		case OpcodeReadByte:
+			Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed download: %v", err))
+		case OpcodeWriteByte:
+			Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed upload: %v", err))
 		}
-		session.errorMessage(errorCodeUndefined, fmt.Sprintf("%v", err))
+		session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
 		return
 	}
 
 	switch opcode {
-	case opcodeReadByte:
-		log <- newNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed download: %v", session.filename))
-	case opcodeWriteByte:
-		log <- newNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed upload: %v", session.filename))
+	case OpcodeReadByte:
+		Log <- NewNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed download: %v", session.Filename))
+	case OpcodeWriteByte:
+		Log <- NewNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed upload: %v", session.Filename))
 	}
 	return
 }
