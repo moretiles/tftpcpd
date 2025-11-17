@@ -146,20 +146,20 @@ func sessionRoutine(ctx context.Context, destinationAddr *net.UDPAddr, bytes []b
 	}
 	defer session.Close()
 
-	opcode, err := session.Accept(bytes)
+	operation, err := session.Accept(bytes)
 	if err != nil {
 		session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
 		Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Session routine failed to accept: %v", err))
 		return
 	}
 
-	switch opcode {
-	case OpcodeReadByte:
+	switch operation {
+	case ReadAsServer:
 		Log <- NewNormalEvent(session.DestinationAddr.String(), fmt.Sprintf("Client began download: %v", session.Filename))
-		err = session.Read()
-	case OpcodeWriteByte:
+		err = session.ReadAsServer()
+	case WriteAsServer:
 		Log <- NewNormalEvent(session.DestinationAddr.String(), fmt.Sprintf("Client began upload: %v", session.Filename))
-		err = session.Write()
+		err = session.WriteAsServer()
 	default:
 		session.ErrorMessage(ErrorCodeUndefined, "Client requested invalid operation")
 		Log <- NewErrorEvent(session.DestinationAddr.String(), "Client requested invalid operation")
@@ -168,20 +168,20 @@ func sessionRoutine(ctx context.Context, destinationAddr *net.UDPAddr, bytes []b
 
 	// log error
 	if err != nil {
-		switch opcode {
-		case OpcodeReadByte:
+		switch operation {
+		case ReadAsServer:
 			Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed download: %v", err))
-		case OpcodeWriteByte:
+		case WriteAsServer:
 			Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Client failed upload: %v", err))
 		}
 		session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
 		return
 	}
 
-	switch opcode {
-	case OpcodeReadByte:
+	switch operation {
+	case ReadAsServer:
 		Log <- NewNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed download: %v", session.Filename))
-	case OpcodeWriteByte:
+	case WriteAsServer:
 		Log <- NewNormalEvent(destinationAddr.String(), fmt.Sprintf("Client completed upload: %v", session.Filename))
 	}
 	return

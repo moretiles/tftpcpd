@@ -7,13 +7,13 @@ ld_flags = -ldflags='-s -w'
 all: prepare build
 
 prepare:
-	go get .
+	go get ./internal ./cmd/tftpcpd
 
 build:
 	go build -o dist/tftpcpd ${ld_flags} ./cmd/tftpcpd
 
 debug:
-	dlv debug
+	dlv debug ./cmd/tftpcpd
 
 test:
 	go test -tags test ./internal -- -testing
