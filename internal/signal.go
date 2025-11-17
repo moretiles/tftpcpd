@@ -1,4 +1,4 @@
-package main
+package internal
 
 type Signal struct {
 	Kind    uint8

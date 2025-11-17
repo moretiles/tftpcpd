@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"errors"
@@ -13,25 +13,25 @@ var ErrShortMessage = errors.New("Impossibly short message received")
 var ErrUnterminatedNullString = errors.New("Null byte not found")
 
 const (
-	opcodeInvalid = iota
-	opcodeReadByte
-	opcodeWriteByte
-	opcodeDataByte
-	opcodeAcknowledgeByte
-	opcodeErrorByte
-	opcodeOptionAcknowledgeByte
+	OpcodeInvalid = iota
+	OpcodeReadByte
+	OpcodeWriteByte
+	OpcodeDataByte
+	OpcodeAcknowledgeByte
+	OpcodeErrorByte
+	OpcodeOptionAcknowledgeByte
 )
 
 const (
-	errorCodeUndefined = iota
-	errorCodeNoSuchFile
-	errorCodeAccessViolation
-	errorCodeTooMuchData
-	errorCodeIllegalOperation
-	errorCodeUnknownTransferId
-	errorCodeFileAlreadyExists
-	errorCodeNoSuchUser
-	errorCodeOptionAcknowledgeSurprise
+	ErrorCodeUndefined = iota
+	ErrorCodeNoSuchFile
+	ErrorCodeAccessViolation
+	ErrorCodeTooMuchData
+	ErrorCodeIllegalOperation
+	ErrorCodeUnknownTransferId
+	ErrorCodeFileAlreadyExists
+	ErrorCodeNoSuchUser
+	ErrorCodeOptionAcknowledgeSurprise
 )
 
 /*
@@ -41,14 +41,14 @@ const (
  * string (null terminated sequence of bytes) mode
  * [many](key string, value string) optionsAsKeyValuePairs
  */
-type readMessage struct {
-	filename string
-	mode     string
-	options  map[string]string
+type ReadMessage struct {
+	Filename string
+	Mode     string
+	Options  map[string]string
 }
 
-func newReadMessage(filename string, mode string, options map[string]string) readMessage {
-	return readMessage{filename, mode, options}
+func NewReadMessage(filename string, mode string, options map[string]string) ReadMessage {
+	return ReadMessage{filename, mode, options}
 }
 
 /*
@@ -58,14 +58,14 @@ func newReadMessage(filename string, mode string, options map[string]string) rea
  * string (null terminated sequence of bytes) mode
  * [many](key string, value string) optionsAsKeyValuePairs
  */
-type writeMessage struct {
-	filename string
-	mode     string
-	options  map[string]string
+type WriteMessage struct {
+	Filename string
+	Mode     string
+	Options  map[string]string
 }
 
-func newWriteMessage(filename string, mode string, options map[string]string) writeMessage {
-	return writeMessage{filename, mode, options}
+func NewWriteMessage(filename string, mode string, options map[string]string) WriteMessage {
+	return WriteMessage{filename, mode, options}
 }
 
 /*
@@ -74,13 +74,13 @@ func newWriteMessage(filename string, mode string, options map[string]string) wr
  * 2 byte blockNumber
  * [many]char fileDataItself
  */
-type dataMessage struct {
-	blockNumber uint16
-	body        []byte
+type DataMessage struct {
+	BlockNumber uint16
+	Body        []byte
 }
 
-func newDataMessage(blockNumber uint16, body []byte) dataMessage {
-	return dataMessage{blockNumber, body}
+func NewDataMessage(blockNumber uint16, body []byte) DataMessage {
+	return DataMessage{blockNumber, body}
 }
 
 /*
@@ -88,12 +88,12 @@ func newDataMessage(blockNumber uint16, body []byte) dataMessage {
  * 2 byte opcode = 0x0004
  * 2 byte acknowledgedBlockNumber
  */
-type acknowledgeMessage struct {
-	blockNumber uint16
+type AcknowledgeMessage struct {
+	BlockNumber uint16
 }
 
-func newAcknowledgeMessage(blockNumber uint16) acknowledgeMessage {
-	return acknowledgeMessage{blockNumber}
+func NewAcknowledgeMessage(blockNumber uint16) AcknowledgeMessage {
+	return AcknowledgeMessage{blockNumber}
 }
 
 /*
@@ -102,13 +102,13 @@ func newAcknowledgeMessage(blockNumber uint16) acknowledgeMessage {
  * 2 byte errorCode
  * string (null terminated sequence of bytes) humanReadableErrorMessage
  */
-type errorMessage struct {
-	errorCode   uint16
-	explanation string
+type ErrorMessage struct {
+	ErrorCode   uint16
+	Explanation string
 }
 
-func newErrorMessage(errorCode uint16, explanation string) errorMessage {
-	return errorMessage{errorCode, explanation}
+func NewErrorMessage(errorCode uint16, explanation string) ErrorMessage {
+	return ErrorMessage{errorCode, explanation}
 }
 
 /*
@@ -116,28 +116,28 @@ func newErrorMessage(errorCode uint16, explanation string) errorMessage {
  * 2 byte opcode = 0x0006
  * [many](key string, value string) optionsAsKeyValuePairs
  */
-type optionAcknowledgeMessage struct {
-	options map[string]string
+type OptionAcknowledgeMessage struct {
+	Options map[string]string
 }
 
-func newOptionAcknowledgeMessage(options map[string]string) optionAcknowledgeMessage {
-	return optionAcknowledgeMessage{options}
+func NewOptionAcknowledgeMessage(options map[string]string) OptionAcknowledgeMessage {
+	return OptionAcknowledgeMessage{options}
 }
 
 func MessageAsBytes(message any, buf *[]byte) error {
 	switch message.(type) {
-	case readMessage:
-		readMessageAsBytes(message.(readMessage), buf)
-	case writeMessage:
-		writeMessageAsBytes(message.(writeMessage), buf)
-	case dataMessage:
-		dataMessageAsBytes(message.(dataMessage), buf)
-	case acknowledgeMessage:
-		acknowledgeMessageAsBytes(message.(acknowledgeMessage), buf)
-	case errorMessage:
-		errorMessageAsBytes(message.(errorMessage), buf)
-	case optionAcknowledgeMessage:
-		optionAcknowledgeMessageAsBytes(message.(optionAcknowledgeMessage), buf)
+	case ReadMessage:
+		readMessageAsBytes(message.(ReadMessage), buf)
+	case WriteMessage:
+		writeMessageAsBytes(message.(WriteMessage), buf)
+	case DataMessage:
+		dataMessageAsBytes(message.(DataMessage), buf)
+	case AcknowledgeMessage:
+		acknowledgeMessageAsBytes(message.(AcknowledgeMessage), buf)
+	case ErrorMessage:
+		errorMessageAsBytes(message.(ErrorMessage), buf)
+	case OptionAcknowledgeMessage:
+		optionAcknowledgeMessageAsBytes(message.(OptionAcknowledgeMessage), buf)
 	default:
 		return ErrUnknownMessage
 	}
@@ -160,103 +160,103 @@ func popNullString(buf *[]byte) (string, error) {
 	return nullString, nil
 }
 
-func readMessageAsBytes(message readMessage, buf *[]byte) error {
+func readMessageAsBytes(message ReadMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	// append opcode
-	*buf = append(*buf, 0, opcodeReadByte)
+	*buf = append(*buf, 0, OpcodeReadByte)
 
 	// append filename
-	*buf = append(*buf, []byte(message.filename+"\x00")...)
+	*buf = append(*buf, []byte(message.Filename+"\x00")...)
 
 	// append mode
-	*buf = append(*buf, []byte(message.mode+"\x00")...)
+	*buf = append(*buf, []byte(message.Mode+"\x00")...)
 
 	// append options (if any)
-	for k, v := range message.options {
+	for k, v := range message.Options {
 		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
 	return nil
 }
 
-func writeMessageAsBytes(message writeMessage, buf *[]byte) error {
+func writeMessageAsBytes(message WriteMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	// append opcode
-	*buf = append(*buf, 0, opcodeWriteByte)
+	*buf = append(*buf, 0, OpcodeWriteByte)
 
 	// append filename
-	*buf = append(*buf, []byte(message.filename+"\x00")...)
+	*buf = append(*buf, []byte(message.Filename+"\x00")...)
 
 	// append mode
-	*buf = append(*buf, []byte(message.mode+"\x00")...)
+	*buf = append(*buf, []byte(message.Mode+"\x00")...)
 
 	// append options (if any)
-	for k, v := range message.options {
+	for k, v := range message.Options {
 		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
 	return nil
 }
 
-func dataMessageAsBytes(message dataMessage, buf *[]byte) error {
+func dataMessageAsBytes(message DataMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	// append opcode
-	*buf = append(*buf, 0, opcodeDataByte)
+	*buf = append(*buf, 0, OpcodeDataByte)
 
 	// append block number as big endian uint16
-	*buf = append(*buf, byte(message.blockNumber>>8), byte(message.blockNumber))
+	*buf = append(*buf, byte(message.BlockNumber>>8), byte(message.BlockNumber))
 
 	// append data itself
-	*buf = append(*buf, message.body...)
+	*buf = append(*buf, message.Body...)
 
 	return nil
 }
 
-func acknowledgeMessageAsBytes(message acknowledgeMessage, buf *[]byte) error {
+func acknowledgeMessageAsBytes(message AcknowledgeMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	// append opcode
-	*buf = append(*buf, 0, opcodeAcknowledgeByte)
+	*buf = append(*buf, 0, OpcodeAcknowledgeByte)
 
 	// append block number as big endian uint16
-	*buf = append(*buf, byte(message.blockNumber>>8), byte(message.blockNumber))
+	*buf = append(*buf, byte(message.BlockNumber>>8), byte(message.BlockNumber))
 
 	return nil
 }
 
-func errorMessageAsBytes(message errorMessage, buf *[]byte) error {
+func errorMessageAsBytes(message ErrorMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	// append opcode
-	*buf = append(*buf, 0, opcodeErrorByte)
+	*buf = append(*buf, 0, OpcodeErrorByte)
 
 	// append error code as big endian uint16
-	*buf = append(*buf, byte(message.errorCode>>8), byte(message.errorCode))
+	*buf = append(*buf, byte(message.ErrorCode>>8), byte(message.ErrorCode))
 
 	// append human readable explanation
-	*buf = append(*buf, message.explanation...)
+	*buf = append(*buf, message.Explanation...)
 	*buf = append(*buf, '\x00')
 
 	return nil
 }
 
-func optionAcknowledgeMessageAsBytes(message optionAcknowledgeMessage, buf *[]byte) error {
+func optionAcknowledgeMessageAsBytes(message OptionAcknowledgeMessage, buf *[]byte) error {
 	// zero out length, keep capacity
 	*buf = (*buf)[:0]
 
 	//append opcode
-	*buf = append(*buf, 0, opcodeOptionAcknowledgeByte)
+	*buf = append(*buf, 0, OpcodeOptionAcknowledgeByte)
 
 	// append options (if any)
-	for k, v := range message.options {
+	for k, v := range message.Options {
 		*buf = append(*buf, []byte(strings.ToLower(k)+"\x00"+v+"\x00")...)
 	}
 
@@ -281,32 +281,32 @@ func BytesAsMessage(buf []byte) (any, error) {
 	opcode = buf[1]
 	buf = buf[2:]
 	switch opcode {
-	case opcodeReadByte:
+	case OpcodeReadByte:
 		message, err = bytesAsReadMessage(buf)
 		if err != nil {
 			return nil, err
 		}
-	case opcodeWriteByte:
+	case OpcodeWriteByte:
 		message, err = bytesAsWriteMessage(buf)
 		if err != nil {
 			return nil, err
 		}
-	case opcodeDataByte:
+	case OpcodeDataByte:
 		message, err = bytesAsDataMessage(buf)
 		if err != nil {
 			return nil, err
 		}
-	case opcodeAcknowledgeByte:
+	case OpcodeAcknowledgeByte:
 		message, err = bytesAsAcknowledgeMessage(buf)
 		if err != nil {
 			return nil, err
 		}
-	case opcodeErrorByte:
+	case OpcodeErrorByte:
 		message, err = bytesAsErrorMessage(buf)
 		if err != nil {
 			return nil, err
 		}
-	case opcodeOptionAcknowledgeByte:
+	case OpcodeOptionAcknowledgeByte:
 		message, err = bytesAsOptionAcknowledgeMessage(buf)
 		if err != nil {
 			return nil, err
@@ -318,7 +318,7 @@ func BytesAsMessage(buf []byte) (any, error) {
 	return message, nil
 }
 
-func bytesAsReadMessage(buf []byte) (readMessage, error) {
+func bytesAsReadMessage(buf []byte) (ReadMessage, error) {
 	var filename string
 	var mode string
 	var options map[string]string
@@ -326,31 +326,31 @@ func bytesAsReadMessage(buf []byte) (readMessage, error) {
 	minPossibleLen := 1 + 1 + 5 + 1
 
 	if len(buf) < minPossibleLen {
-		return readMessage{}, ErrShortMessage
+		return ReadMessage{}, ErrShortMessage
 	}
 
 	filename, err := popNullString(&buf)
 	if err != nil {
-		return readMessage{}, errors.Join(err, ErrUnterminatedNullString)
+		return ReadMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	mode, err = popNullString(&buf)
 	mode = strings.ToLower(mode)
 	// Only process options if they exist
 	if errors.Is(err, io.EOF) {
-		return newReadMessage(filename, mode, options), nil
+		return NewReadMessage(filename, mode, options), nil
 	} else if err != nil {
-		return readMessage{}, errors.Join(err, ErrUnterminatedNullString)
+		return ReadMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	options, err = bytesAsOptionMap(buf)
 	if err != nil {
-		return readMessage{}, err
+		return ReadMessage{}, err
 	}
-	return newReadMessage(filename, mode, options), nil
+	return NewReadMessage(filename, mode, options), nil
 }
 
-func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
+func bytesAsWriteMessage(buf []byte) (WriteMessage, error) {
 	var filename string
 	var mode string
 	var options map[string]string
@@ -358,12 +358,12 @@ func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 	minPossibleLen := 1 + 1 + 5 + 1
 
 	if len(buf) < minPossibleLen {
-		return writeMessage{}, ErrShortMessage
+		return WriteMessage{}, ErrShortMessage
 	}
 
 	filename, err := popNullString(&buf)
 	if err != nil {
-		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
+		return WriteMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
 	mode, err = popNullString(&buf)
@@ -371,23 +371,23 @@ func bytesAsWriteMessage(buf []byte) (writeMessage, error) {
 	if !errors.Is(err, io.EOF) {
 		options, err = bytesAsOptionMap(buf)
 		if err != nil {
-			return writeMessage{}, err
+			return WriteMessage{}, err
 		}
 	} else if err != nil {
-		return writeMessage{}, errors.Join(err, ErrUnterminatedNullString)
+		return WriteMessage{}, errors.Join(err, ErrUnterminatedNullString)
 	}
 
-	return newWriteMessage(filename, mode, options), nil
+	return NewWriteMessage(filename, mode, options), nil
 }
 
-func bytesAsDataMessage(buf []byte) (dataMessage, error) {
+func bytesAsDataMessage(buf []byte) (DataMessage, error) {
 	var blockNumber uint16
 	var data []byte
 
 	minPossibleLen := 2
 
 	if len(buf) < minPossibleLen {
-		return dataMessage{}, ErrShortMessage
+		return DataMessage{}, ErrShortMessage
 	}
 
 	blockNumber += uint16(buf[0]) << 8
@@ -397,32 +397,32 @@ func bytesAsDataMessage(buf []byte) (dataMessage, error) {
 		data = buf[2:]
 	}
 
-	return newDataMessage(blockNumber, data), nil
+	return NewDataMessage(blockNumber, data), nil
 }
 
-func bytesAsAcknowledgeMessage(buf []byte) (acknowledgeMessage, error) {
+func bytesAsAcknowledgeMessage(buf []byte) (AcknowledgeMessage, error) {
 	var blockNumber uint16
 
 	minPossibleLen := 2
 
 	if len(buf) < minPossibleLen {
-		return acknowledgeMessage{}, ErrShortMessage
+		return AcknowledgeMessage{}, ErrShortMessage
 	}
 
 	blockNumber += uint16(buf[0]) << 8
 	blockNumber += uint16(buf[1])
 
-	return newAcknowledgeMessage(blockNumber), nil
+	return NewAcknowledgeMessage(blockNumber), nil
 }
 
-func bytesAsErrorMessage(buf []byte) (errorMessage, error) {
+func bytesAsErrorMessage(buf []byte) (ErrorMessage, error) {
 	var errorCode uint16
 	var explanation string
 
 	minPossibleLen := 1 + 1 + 5 + 1
 
 	if len(buf) < minPossibleLen {
-		return errorMessage{}, ErrShortMessage
+		return ErrorMessage{}, ErrShortMessage
 	}
 
 	errorCode += uint16(buf[0]) << 8
@@ -431,27 +431,27 @@ func bytesAsErrorMessage(buf []byte) (errorMessage, error) {
 	buf = buf[2:]
 	explanation, err := popNullString(&buf)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return errorMessage{}, ErrUnterminatedNullString
+		return ErrorMessage{}, ErrUnterminatedNullString
 	}
 
-	return newErrorMessage(errorCode, explanation), nil
+	return NewErrorMessage(errorCode, explanation), nil
 }
 
-func bytesAsOptionAcknowledgeMessage(buf []byte) (optionAcknowledgeMessage, error) {
+func bytesAsOptionAcknowledgeMessage(buf []byte) (OptionAcknowledgeMessage, error) {
 	var options map[string]string
 
 	minPossibleLen := 1 + 1 + 1 + 1
 
 	if len(buf) < minPossibleLen {
-		return optionAcknowledgeMessage{}, ErrShortMessage
+		return OptionAcknowledgeMessage{}, ErrShortMessage
 	}
 
 	options, err := bytesAsOptionMap(buf)
 	if err != nil {
-		return optionAcknowledgeMessage{}, err
+		return OptionAcknowledgeMessage{}, err
 	}
 
-	return newOptionAcknowledgeMessage(options), nil
+	return NewOptionAcknowledgeMessage(options), nil
 }
 
 func bytesAsOptionMap(buf []byte) (map[string]string, error) {

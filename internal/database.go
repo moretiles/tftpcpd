@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"context"
@@ -41,7 +41,7 @@ func (model *fileModel) deleteFiles(ctx context.Context, rows *sql.Rows) error {
 				return err
 			}
 
-			err = cfg.directory.Remove(model.Path())
+			err = Cfg.Directory.Remove(model.Path())
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
@@ -66,7 +66,7 @@ func deleteOutOfDateGlobally() error {
 	ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(3*time.Minute))
 
 	// start new transaction
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -106,37 +106,37 @@ func deleteOutOfDateGlobally() error {
 	return nil
 }
 
-func databaseInit() error {
+func DatabaseInit() error {
 	var err error
 	var errPtr *error = &err
 	var parentCtx context.Context = context.Background()
 
 	// only run first time databaseRoutine itself starts
-	db, err = sql.Open("sqlite3", cfg.sqlite3DBPath)
+	DB, err = sql.Open("sqlite3", Cfg.Sqlite3DBPath)
 	if err != nil {
-		log <- newErrorEvent("DATABASE", fmt.Sprintf("Unable to open database file at: %v", cfg.sqlite3DBPath))
+		Log <- NewErrorEvent("DATABASE", fmt.Sprintf("Unable to open database file at: %v", Cfg.Sqlite3DBPath))
 		return err
 	}
 	defer func() {
 		if *errPtr != nil {
-			log <- newErrorEvent("DATABASE", fmt.Sprintf("Encountered error opening database: %v", err))
-			db.Close()
+			Log <- NewErrorEvent("DATABASE", fmt.Sprintf("Encountered error opening database: %v", err))
+			DB.Close()
 		}
 	}()
 
-	// Prepare db if not already open
+	// Prepare DB if not already open
 	{
 		var tx *sql.Tx
 
 		// make sure database is working
 		ctx, _ := context.WithDeadline(parentCtx, time.Now().Add(time.Second*3))
-		err = db.PingContext(ctx)
+		err = DB.PingContext(ctx)
 		if err != nil {
 			return err
 		}
 
 		ctx, _ = context.WithDeadline(parentCtx, time.Now().Add(time.Second*15))
-		tx, err = db.BeginTx(ctx, nil)
+		tx, err = DB.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func databaseInit() error {
 		var rows *sql.Rows
 
 		ctx, _ := context.WithDeadline(parentCtx, time.Now().Add(3*time.Minute))
-		tx, err = db.BeginTx(ctx, nil)
+		tx, err = DB.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -214,10 +214,10 @@ func databaseInit() error {
 }
 
 // listen for requests to terminate from parent and clear out-of-date files not being requested
-func databaseRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
+func DatabaseRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 	var err error
 
-	log <- newNormalEvent("DATABASE", fmt.Sprintf("Database ready for access: %v", cfg.sqlite3DBPath))
+	Log <- NewNormalEvent("DATABASE", fmt.Sprintf("Database ready for access: %v", Cfg.Sqlite3DBPath))
 
 	for true {
 		select {

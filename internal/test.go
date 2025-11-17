@@ -1,7 +1,7 @@
 //go:build test
 // +build test
 
-package main
+package internal
 
 import (
 	"fmt"
@@ -14,19 +14,19 @@ func init() {
 	fmt.Println("Called init function in test.go to prepare environment for tests")
 
 	// OS reclaims this when the program closes, still annoying there is no init equivelent for once everything has finished executing
-	cfg.directory, err = os.OpenRoot(".")
+	Cfg.Directory, err = os.OpenRoot(".")
 	if err != nil {
 		fmt.Println("Failed to setup environment for tests")
 	}
-	cfg.sqlite3DBPath = "tftpcpd.db"
+	Cfg.Sqlite3DBPath = "test.tftpcpd.db"
 
-	if loggerInit() != nil {
+	if LoggerInit() != nil {
 		os.Exit(4)
 	}
-	if databaseInit() != nil {
+	if DatabaseInit() != nil {
 		os.Exit(2)
 	}
-	if serverInit() != nil {
+	if ServerInit() != nil {
 		os.Exit(3)
 	}
 }

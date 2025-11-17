@@ -10,16 +10,16 @@ prepare:
 	go get .
 
 build:
-	go build ${ld_flags} -o out/tftpcpd
+	go build -o dist/tftpcpd ${ld_flags} ./cmd/tftpcpd
 
 debug:
 	dlv debug
 
 test:
-	go test -tags test -- -testing
+	go test -tags test ./internal -- -testing
 
 clean:
-	rm -f out/tftpcpd*
+	rm -f dist/tftpcpd*
 
 
 
@@ -27,21 +27,21 @@ clean:
 # Use 'build' to build for your native platform
 # Only worry about this if you want to distribute binaries targeting multiple operating systems
 
-release: out/tftpcpd.mac.amd64 out/tftpcpd.mac.arm64 out/tftpcpd.exe out/tftpcpd.linux.amd64 out/tftpcpd.linux.arm64
+release: dist/tftpcpd.mac.amd64 dist/tftpcpd.mac.arm64 dist/tftpcpd.exe dist/tftpcpd.linux.amd64 dist/tftpcpd.linux.arm64
 
-out/tftpcpd.exe:
-	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="zig cc -target x86_64-windows" CXX="zig c++ -target x86_64-windows" go build ${ld_flags} -tags "windows amd64" -o out/tftpcpd.exe
+dist/tftpcpd.exe:
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="zig cc -target x86_64-windows" CXX="zig c++ -target x86_64-windows" go build -o dist/tftpcpd.exe ${ld_flags} -tags "windows amd64" ./cmd/tftpcpd
 
-out/tftpcpd.linux.amd64:
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="zig cc -target x86_64-linux" CXX="zig c++ -target x86_64-linux" go build ${ld_flags} -tags "linux amd64" -o out/tftpcpd.linux.amd64
+dist/tftpcpd.linux.amd64:
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="zig cc -target x86_64-linux" CXX="zig c++ -target x86_64-linux" go build -o dist/tftpcpd.linux.amd64 ${ld_flags} -tags "linux amd64" ./cmd/tftpcpd
 
-out/tftpcpd.linux.arm64:
-	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux" CXX="zig c++ -target aarch64-linux" go build ${ld_flags} -tags "linux arm64" -o out/tftpcpd.linux.arm64
+dist/tftpcpd.linux.arm64:
+	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux" CXX="zig c++ -target aarch64-linux" go build -o dist/tftpcpd.linux.arm64 ${ld_flags} -tags "linux arm64" ./cmd/tftpcpd
 
-out/tftpcpd.mac.amd64:
+dist/tftpcpd.mac.amd64:
 	[ ! -d "./MacOSX_SDK" ] && echo "UNABLE TO FIND REQUIRED MAC OS SDK DIRECTORY" 1>&2 && exit 1 || true
-	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="zig cc -target x86_64-macos ${mac_frameworks} ${mac_libraries}" CXX="zig c++ -target x86_64-macos ${mac_frameworks} ${mac_libraries}" go build ${ld_flags} -tags "darwin amd64" -o out/tftpcpd.mac.amd64
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="zig cc -target x86_64-macos ${mac_frameworks} ${mac_libraries}" CXX="zig c++ -target x86_64-macos ${mac_frameworks} ${mac_libraries}" go build -o dist/tftpcpd.mac.amd64 ${ld_flags} -tags "darwin amd64" ./cmd/tftpcpd
 
-out/tftpcpd.mac.arm64:
+dist/tftpcpd.mac.arm64:
 	[ ! -d "./MacOSX_SDK" ] && echo "UNABLE TO FIND REQUIRED MAC OS SDK DIRECTORY" 1>&2 && exit 1 || true
-	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="zig cc -target aarch64-macos ${mac_frameworks} ${mac_libraries}" CXX="zig c++ -target aarch64-macos ${mac_frameworks} ${mac_libraries}" go build ${ld_flags} -tags "darwin arm64" -o out/tftpcpd.mac.arm64
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="zig cc -target aarch64-macos ${mac_frameworks} ${mac_libraries}" CXX="zig c++ -target aarch64-macos ${mac_frameworks} ${mac_libraries}" go build -o dist/tftpcpd.mac.arm64 ${ld_flags} -tags "darwin arm64" ./cmd/tftpcpd

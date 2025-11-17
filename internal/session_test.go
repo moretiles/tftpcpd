@@ -1,4 +1,4 @@
-package main
+package internal
 
 // Testing the functions used by the server is important.
 // The read and write functions, however, seem far easier to test using real TFTP clients
