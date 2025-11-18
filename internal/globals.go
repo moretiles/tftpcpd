@@ -10,15 +10,19 @@ type Config struct {
 	MemoryLimit int
 	Debug       bool
 
-	// files
+	// server options
 	Directory     *os.Root
 	Sqlite3DBPath string
 	NormalLogFile string
 	DebugLogFile  string
 	ErrorLogFile  string
 
+	// client options
+	Write string
+
 	// args
-	Address string
+	Address  string
+	Filename string
 
 	// used to check whether we are testing
 	Testing *bool

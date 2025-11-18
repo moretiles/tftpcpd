@@ -21,7 +21,9 @@ tags
 /tests/root/*.bin
 
 # executable
+/dist/tftpcpc*
 /dist/tftpcpd*
+/tftpcpc
 /tftpcpd
 
 # database and test database

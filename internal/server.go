@@ -140,9 +140,18 @@ func ServerRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
 }
 
 func sessionRoutine(ctx context.Context, destinationAddr *net.UDPAddr, bytes []byte) {
-	session, err := NewTftpSession(ctx, destinationAddr)
+	var err error
+	var destination *net.UDPConn
+
+	destination, err = net.DialUDP("udp", nil, destinationAddr)
 	if err != nil {
 		Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession: %v", err))
+		return
+	}
+	session, err := NewTftpSession(ctx, destination)
+	if err != nil {
+		Log <- NewErrorEvent(destinationAddr.String(), fmt.Sprintf("Failed to create tftpSession: %v", err))
+		return
 	}
 	defer session.Close()
 
