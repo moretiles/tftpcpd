@@ -116,13 +116,13 @@ func main() {
 
 	processFlags()
 	if internal.LoggerInit() != nil {
-		os.Exit(4)
-	}
-	if internal.DatabaseInit() != nil {
 		os.Exit(2)
 	}
-	if internal.ServerInit() != nil {
+	if internal.DatabaseInit() != nil {
 		os.Exit(3)
+	}
+	if internal.ServerInit() != nil {
+		os.Exit(4)
 	}
 	// inform user how to exit and start goroutines
 	{

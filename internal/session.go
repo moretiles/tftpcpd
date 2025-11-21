@@ -29,7 +29,7 @@ type TftpSession struct {
 	Ctx context.Context
 
 	// used for connection
-	DestinationAddr *net.UDPAddr
+	DestinationAddr net.Addr
 	Destination     *net.UDPConn
 	SendBuf         []byte
 	ReceiveBuf      []byte
@@ -57,8 +57,7 @@ type TftpSession struct {
 	MostRecentMessage     any
 }
 
-func NewTftpSession(ctx context.Context, destination *net.UDPAddr) (TftpSession, error) {
-	var err error
+func NewTftpSession(ctx context.Context, destination *net.UDPConn) (TftpSession, error) {
 	var session TftpSession
 
 	// Do not derive new context
@@ -70,11 +69,8 @@ func NewTftpSession(ctx context.Context, destination *net.UDPAddr) (TftpSession,
 	session.TransferSize = 0 // 0 if unknown
 	session.WindowSize = 512
 
-	session.DestinationAddr = destination
-	session.Destination, err = net.DialUDP("udp", nil, session.DestinationAddr)
-	if err != nil {
-		return TftpSession{}, err
-	}
+	session.Destination = destination
+	session.DestinationAddr = destination.LocalAddr()
 	// Add 4 to support the data message preamble
 	session.SendBuf = make([]byte, session.BlockSize+DataPreambleLength)
 	session.ReceiveBuf = make([]byte, session.BlockSize+DataPreambleLength)
@@ -107,7 +103,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 		return 0, err
 	}
 
-	stmt := tx.Stmt(ReserveStatementRead)
+	stmt := tx.Stmt(ReserveStatementSelect)
 	row := stmt.QueryRow(session.Filename)
 	err = model.scanRow(row)
 	if err != nil {
@@ -116,7 +112,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 	}
 	unixMicro := model.timeStarted
 
-	stmt = tx.Stmt(ReserveStatementWrite)
+	stmt = tx.Stmt(ReserveStatementUpdate)
 	_, err = stmt.Exec(session.Filename)
 	if err != nil {
 		_ = tx.Rollback()
@@ -142,6 +138,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 // called from within sessionRoutine because both when loading options
 // or responding to a read request we may open a file for the first time.
 func (session *TftpSession) Release(unixMicro int64) error {
+	var stmt *sql.Stmt
 	var model fileModel = newFileModel()
 
 	// file may be nil, means nothing was ever opened
@@ -156,16 +153,27 @@ func (session *TftpSession) Release(unixMicro int64) error {
 		return err
 	}
 
-	stmt := tx.Stmt(ReleaseStatementRead)
-	row := stmt.QueryRow(session.Filename)
-	err = model.scanRow(row)
+	stmt = tx.Stmt(ReleaseStatementUpdate)
+	_, err = stmt.Exec(session.Filename, unixMicro)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	_ = model.timeStarted
 
-	stmt = tx.Stmt(ReleaseStatementWrite)
+	stmt = tx.Stmt(ReleaseStatementSelect)
+	rows, err := stmt.Query(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer rows.Close()
+	err = model.deleteFiles(session.Ctx, rows)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	stmt = tx.Stmt(ReleaseStatementDelete)
 	_, err = stmt.Exec(session.Filename)
 	if err != nil {
 		_ = tx.Rollback()
@@ -212,7 +220,10 @@ func (session *TftpSession) Prepare() (int64, error) {
 
 // inform database client succesfully uploaded entire file, mark it as available
 func (session *TftpSession) OverwriteSuccess(unixMicro int64) error {
-	err := session.File.Close()
+	var err error
+	var model fileModel = newFileModel()
+
+	err = session.File.Close()
 	if err != nil {
 		return err
 	}
@@ -221,13 +232,35 @@ func (session *TftpSession) OverwriteSuccess(unixMicro int64) error {
 	if err != nil {
 		return err
 	}
-	stmt := tx.Stmt(OverwriteSuccessStatement)
+
+	stmt := tx.Stmt(OverwriteSuccessUpdate)
 	uploadCompleted := time.Now().UnixMicro()
 	_, err = stmt.Exec(uploadCompleted, session.Filename, unixMicro)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
+
+	stmt = tx.Stmt(OverwriteSuccessSelect)
+	rows, err := stmt.Query(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer rows.Close()
+	err = model.deleteFiles(session.Ctx, rows)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	stmt = tx.Stmt(OverwriteSuccessDelete)
+	_, err = stmt.Exec(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		return err
@@ -318,12 +351,19 @@ func (session *TftpSession) WriteFile() error {
 }
 
 // send length bytes of session.SendBuf to client
-func (session *TftpSession) Send() error {
+func (session *TftpSession) Send(destination *net.UDPAddr) error {
+	var n int
+	var err error
+
 	if session == nil || session.SendBuf == nil {
 		return nil
 	}
 
-	n, err := session.Destination.Write(session.SendBuf)
+	if destination == nil {
+		n, err = session.Destination.Write(session.SendBuf)
+	} else {
+		n, err = session.Destination.WriteToUDP(session.SendBuf, destination)
+	}
 	if err != nil {
 		return err
 	}
@@ -334,35 +374,38 @@ func (session *TftpSession) Send() error {
 	return nil
 }
 
-func (session *TftpSession) Receive() error {
+func (session *TftpSession) Receive() (*net.UDPAddr, error) {
 	// Allow ten timeouts, if we timeout then resend
 	for _ = range 10 {
 		select {
 		case <-session.Ctx.Done():
-			return context.Cause(session.Ctx)
+			return nil, context.Cause(session.Ctx)
 		default:
 			session.ReceiveBuf = session.ReceiveBuf[:session.BlockSize+DataPreambleLength]
 			session.Destination.SetReadDeadline(time.Now().Add(session.Timeout))
+			//messageLength, addr, err := session.Destination.ReadFromUDP(session.ReceiveBuf)
 			messageLength, addr, err := session.Destination.ReadFromUDP(session.ReceiveBuf)
 			session.ReceiveBuf = session.ReceiveBuf[:messageLength]
 			if err != nil {
-				return err
+				return nil, err
 			}
-			ip1, ip2 := addr.IP, session.DestinationAddr.IP
-			port1, port2 := addr.Port, session.DestinationAddr.Port
-			zone1, zone2 := addr.Zone, session.DestinationAddr.Zone
-			if !ip1.Equal(ip2) || port1 != port2 || zone1 != zone2 {
-				return errors.New("Client changed ip/port... possible man in the middle attack?")
-			}
+			/*
+				ip1, ip2 := addr.IP, session.DestinationAddr.IP
+				port1, port2 := addr.Port, session.DestinationAddr.Port
+				zone1, zone2 := addr.Zone, session.DestinationAddr.Zone
+				if !ip1.Equal(ip2) || port1 != port2 || zone1 != zone2 {
+					return errors.New("Client changed ip/port... possible man in the middle attack?")
+				}
+			*/
 			session.MostRecentMessage, err = BytesAsMessage(session.ReceiveBuf[:messageLength])
 			if err != nil {
-				return err
+				return nil, err
 			}
-			return nil
+			return addr, nil
 		}
 	}
 
-	return errors.New("Client connection (likely) dead")
+	return nil, errors.New("Client connection (likely) dead")
 }
 
 // create and send read message to server
@@ -370,14 +413,19 @@ func (session *TftpSession) ReadMessage(filename string, options map[string]stri
 	// netascii is a nop
 	mode := "octal"
 
-	err := MessageAsBytes(NewReadMessage(filename, mode, options), &(session.SendBuf))
+	addr, err := net.ResolveUDPAddr("udp", Cfg.Address)
+	if err != nil {
+		return err
+	}
+
+	err = MessageAsBytes(NewReadMessage(filename, mode, options), &(session.SendBuf))
 	if err != nil {
 		return err
 	}
 
 	session.Filename = filename
 	session.Options = options
-	return session.Send()
+	return session.Send(addr)
 }
 
 // create and send write message to server
@@ -385,14 +433,19 @@ func (session *TftpSession) WriteMessage(filename string, options map[string]str
 	// netascii is a nop
 	mode := "octal"
 
-	err := MessageAsBytes(NewWriteMessage(filename, mode, options), &(session.SendBuf))
+	addr, err := net.ResolveUDPAddr("udp", Cfg.Address)
+	if err != nil {
+		return err
+	}
+
+	err = MessageAsBytes(NewWriteMessage(filename, mode, options), &(session.SendBuf))
 	if err != nil {
 		return err
 	}
 
 	session.Filename = filename
 	session.Options = options
-	return session.Send()
+	return session.Send(addr)
 }
 
 // create and send data message to client
@@ -400,7 +453,7 @@ func (session *TftpSession) DataMessage() error {
 	// session.SendBuf used to store loaded data so special care taken to avoid unneeded secondary write
 	// see session.FileRead to learn how data is put into proper order
 
-	return session.Send()
+	return session.Send(nil)
 }
 
 // create and send acknowledge message to client
@@ -416,7 +469,7 @@ func (session *TftpSession) AcknowledgeMessage() error {
 		return errors.New("Truncated acknowledge message")
 	}
 
-	return session.Send()
+	return session.Send(nil)
 }
 
 // create and send error message to client
@@ -433,7 +486,7 @@ func (session *TftpSession) ErrorMessage(code uint8, message string) error {
 		return errors.New("Truncated error message")
 	}
 
-	return session.Send()
+	return session.Send(nil)
 }
 
 // create and send option acknowledge message to client
@@ -452,7 +505,7 @@ func (session *TftpSession) OptionAcknowledgeMessage() error {
 		return errors.New("Truncated option acknowledge message")
 	}
 
-	return session.Send()
+	return session.Send(nil)
 }
 
 // establish connection with client
@@ -485,32 +538,6 @@ func (session *TftpSession) Accept(bytes []byte) (uint16, error) {
 	return session.Operation, nil
 }
 
-// add heldMessage argument to receiveDataLoop and sendDataLoop
-// add field to session used to check whether session is acting as a server or client
-
-/*
-func (session *TftpSession) ReadAsClient(filename string, options map[string]string) error {
-    var err error
-
-    if err = session.ReadMessage(); err != nil {
-        session.ErrorMessage(ErrorCodeUndefined, fmt.Sprintf("%v", err))
-        Log <- NewErrorEvent(session.DestinationAddr.String(), fmt.Sprintf("Session routine failed to accept: %v", err)
-        return err
-    }
-
-    // set tsize is 0 in order to get the expected  size from the server
-    //  call receive right now making the assumption to handle options {
-    //    :server_does => compare those options with current set options and send ack if they are good
-    //    :server_does_not => proceed to receiveDataLoop
-    //  }
-    //
-    //  open file (no need for worrying about filemodel
-    //  defer file.Close()
-    //
-    //  call receiveDataLoop using new `heldMessage` argument used to indicate we already hold some message
-}
-*/
-
 func (session *TftpSession) ReadAsServer() error {
 	var err error
 
@@ -540,7 +567,7 @@ func (session *TftpSession) ReadAsServer() error {
 			Log <- NewDebugEvent(session.DestinationAddr.String(), "Awaiting acknowledgement from client of option acknowledge message")
 		}
 		session.LastValidMessage = session.MostRecentMessage
-		if err = session.Receive(); err != nil {
+		if _, err = session.Receive(); err != nil {
 			return err
 		}
 
@@ -554,6 +581,8 @@ func (session *TftpSession) ReadAsServer() error {
 		if session.MostRecentMessage.(AcknowledgeMessage).BlockNumber != 0 {
 			return errors.New("Did not acknowledge the server's attempt to open a connection with supplied options")
 		}
+
+		session.LastValidMessage = session.MostRecentMessage
 
 		if Cfg.Debug {
 			Log <- NewDebugEvent(session.DestinationAddr.String(), "Received acknowledgement from client of option acknowledge message")
@@ -581,14 +610,14 @@ func (session *TftpSession) ReadAsServer() error {
 		Log <- NewDebugEvent(session.DestinationAddr.String(), fmt.Sprintf("Reserved %v with file time %v", session.Filename, session.UnixMicro))
 	}
 
-	if err = session.SendDataLoop(); err != nil {
+	if err = session.SendDataLoop(false); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (session *TftpSession) SendDataLoop() error {
+func (session *TftpSession) SendDataLoop(alreadyHoldingMessage bool) error {
 	var readEverything bool = false
 	var err error
 
@@ -615,7 +644,6 @@ func (session *TftpSession) SendDataLoop() error {
 		}
 
 		// setup for receive loop
-		session.LastValidMessage = session.MostRecentMessage
 		var i int = 1
 		var awaitingRequest bool = true
 
@@ -630,8 +658,10 @@ func (session *TftpSession) SendDataLoop() error {
 				return errors.New("Underlying network may be bad, many retransmiteed messages")
 			}
 
-			// Get next potentially valid message
-			if err = session.Receive(); err != nil {
+			// If the loop did not begin with a prior message then get next potentially valid message
+			if alreadyHoldingMessage {
+				alreadyHoldingMessage = false
+			} else if _, err = session.Receive(); err != nil {
 				return err
 			}
 
@@ -657,6 +687,7 @@ func (session *TftpSession) SendDataLoop() error {
 			Log <- NewDebugEvent(session.DestinationAddr.String(), fmt.Sprintf("Client acknowledged block #%v", session.BlockNumber))
 		}
 
+		session.LastValidMessage = session.MostRecentMessage
 		session.BlockNumber += 1
 	}
 
@@ -683,6 +714,7 @@ func (session *TftpSession) WriteAsServer() error {
 	} else if err = session.AcknowledgeMessage(); err != nil {
 		return errors.New("Unable to send acknowledgement to write request")
 	}
+	session.LastValidMessage = session.MostRecentMessage
 
 	// we expect that client will acknowledge first data block with 1
 	session.BlockNumber = 1
@@ -708,7 +740,7 @@ func (session *TftpSession) WriteAsServer() error {
 		Log <- NewDebugEvent(session.DestinationAddr.String(), fmt.Sprintf("Prepared %v with file time %v", session.Filename, unixMicro))
 	}
 
-	err = session.ReceiveDataLoop()
+	err = session.ReceiveDataLoop(false)
 	if err != nil {
 		return err
 	}
@@ -722,7 +754,7 @@ func (session *TftpSession) WriteAsServer() error {
 	return nil
 }
 
-func (session *TftpSession) ReceiveDataLoop() error {
+func (session *TftpSession) ReceiveDataLoop(alreadyHoldingMessage bool) error {
 	var wroteEverything bool = false
 	var err error
 
@@ -731,7 +763,6 @@ func (session *TftpSession) ReceiveDataLoop() error {
 	// if the client sends anything else return error
 	for !wroteEverything {
 		// setup for receive loop
-		session.LastValidMessage = session.MostRecentMessage
 		var i int = 1
 		var awaitingRequest = true
 
@@ -744,7 +775,9 @@ func (session *TftpSession) ReceiveDataLoop() error {
 				return errors.New("Underlying network may be bad, many retransmiteed messages")
 			}
 
-			if err = session.Receive(); err != nil {
+			if alreadyHoldingMessage {
+				alreadyHoldingMessage = false
+			} else if _, err = session.Receive(); err != nil {
 				return err
 			}
 
@@ -786,6 +819,7 @@ func (session *TftpSession) ReceiveDataLoop() error {
 			return err
 		}
 
+		session.LastValidMessage = session.MostRecentMessage
 		session.BlockNumber += 1
 	}
 

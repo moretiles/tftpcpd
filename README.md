@@ -25,10 +25,9 @@ Use the --help flag to learn about them.
 * Create builds for Windows, Linux (amd64 and arm64), and Mac (amd64 and arm64).
 * Enable additional logging when using debug mode.
 * Use SQLite to store persistent file information, preventing race conditions and removing unused out-of-date files periodically.
+* Create simple TFTP client to use in testing. Plan will be to run parallel tests using my TFTP client and curl so I can know whether the client or server is at fault.
 
 ## Todo
-* Clean up code for session generally to better fit with using database and storing start time in session.unixMicro.
-* Make it so that rather than using a goroutine that regularly cleans the entire table tftpSession.release checks, when consumers is zeroed, whether it should delete the released file.
-* Create simple TFTP client to use in testing. Plan will be to run parallel tests using my TFTP client and curl so I can know whether the client or server is at fault.
+* Clean up client code.
 * Standardize errors.
 * Better testing.
