@@ -12,6 +12,7 @@ import (
 
 func ClientRoutine(doingWrite bool, filename string, options map[string]string, ctx context.Context) {
 	var err error
+	var returnCode int
 
 	if doingWrite {
 		err = DoWriteAsClient(Cfg.Filename, options, ctx)
@@ -21,12 +22,16 @@ func ClientRoutine(doingWrite bool, filename string, options map[string]string, 
 	}
 
 	if doingWrite && err != nil {
-		os.Exit(21)
+		returnCode = 21
 	} else if !doingWrite && err != nil {
-		os.Exit(22)
+		returnCode = 22
 	}
 
-	os.Exit(0)
+	if *(Cfg.Testing) {
+		return
+	}
+
+	os.Exit(returnCode)
 }
 
 func DoReadAsClient(filename string, options map[string]string, ctx context.Context) error {

@@ -2,8 +2,11 @@
 
 set -eou pipefail
 
-# run tests
+# run unit tests
 make test
+
+# run integration tests
+./test.sh
 
 # build for release
 make -B release
