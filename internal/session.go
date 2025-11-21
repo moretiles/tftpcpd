@@ -103,7 +103,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 		return 0, err
 	}
 
-	stmt := tx.Stmt(ReserveStatementRead)
+	stmt := tx.Stmt(ReserveStatementSelect)
 	row := stmt.QueryRow(session.Filename)
 	err = model.scanRow(row)
 	if err != nil {
@@ -112,7 +112,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 	}
 	unixMicro := model.timeStarted
 
-	stmt = tx.Stmt(ReserveStatementWrite)
+	stmt = tx.Stmt(ReserveStatementUpdate)
 	_, err = stmt.Exec(session.Filename)
 	if err != nil {
 		_ = tx.Rollback()
@@ -138,6 +138,7 @@ func (session *TftpSession) Reserve() (int64, error) {
 // called from within sessionRoutine because both when loading options
 // or responding to a read request we may open a file for the first time.
 func (session *TftpSession) Release(unixMicro int64) error {
+	var stmt *sql.Stmt
 	var model fileModel = newFileModel()
 
 	// file may be nil, means nothing was ever opened
@@ -152,16 +153,27 @@ func (session *TftpSession) Release(unixMicro int64) error {
 		return err
 	}
 
-	stmt := tx.Stmt(ReleaseStatementRead)
-	row := stmt.QueryRow(session.Filename)
-	err = model.scanRow(row)
+	stmt = tx.Stmt(ReleaseStatementUpdate)
+	_, err = stmt.Exec(session.Filename, unixMicro)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	_ = model.timeStarted
 
-	stmt = tx.Stmt(ReleaseStatementWrite)
+	stmt = tx.Stmt(ReleaseStatementSelect)
+	rows, err := stmt.Query(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer rows.Close()
+	err = model.deleteFiles(session.Ctx, rows)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	stmt = tx.Stmt(ReleaseStatementDelete)
 	_, err = stmt.Exec(session.Filename)
 	if err != nil {
 		_ = tx.Rollback()
@@ -208,7 +220,10 @@ func (session *TftpSession) Prepare() (int64, error) {
 
 // inform database client succesfully uploaded entire file, mark it as available
 func (session *TftpSession) OverwriteSuccess(unixMicro int64) error {
-	err := session.File.Close()
+	var err error
+	var model fileModel = newFileModel()
+
+	err = session.File.Close()
 	if err != nil {
 		return err
 	}
@@ -217,13 +232,35 @@ func (session *TftpSession) OverwriteSuccess(unixMicro int64) error {
 	if err != nil {
 		return err
 	}
-	stmt := tx.Stmt(OverwriteSuccessStatement)
+
+	stmt := tx.Stmt(OverwriteSuccessUpdate)
 	uploadCompleted := time.Now().UnixMicro()
 	_, err = stmt.Exec(uploadCompleted, session.Filename, unixMicro)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
+
+	stmt = tx.Stmt(OverwriteSuccessSelect)
+	rows, err := stmt.Query(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer rows.Close()
+	err = model.deleteFiles(session.Ctx, rows)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	stmt = tx.Stmt(OverwriteSuccessDelete)
+	_, err = stmt.Exec(session.Filename)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		return err

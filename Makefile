@@ -4,6 +4,8 @@ ld_flags = -ldflags='-s -w'
 
 ## Principal operations
 
+.PHONY: all prepare build debug test tags clean
+
 all: prepare build
 
 prepare:
@@ -20,6 +22,9 @@ debug:
 
 test:
 	go test -tags test ./internal -- -testing
+
+tags:
+	ctags -R internal cmd
 
 clean:
 	rm -f dist/tftpcpc*

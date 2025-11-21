@@ -75,7 +75,7 @@ func deleteOutOfDateGlobally() error {
 	rows, err := tx.QueryContext(ctx, `SELECT * FROM files WHERE
             uploadCompleted != 0 AND
             consumers = 0 AND
-            (rowid, filename, uploadCompleted) NOT IN ( SELECT rowid, filename, MAX(uploadCompleted) FROM files GROUP BY filename )`)
+            (rowid, filename, uploadCompleted) NOT IN ( SELECT rowid, filename, MAX(uploadCompleted) FROM files GROUP BY filename );`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -215,23 +215,29 @@ func DatabaseInit() error {
 
 // listen for requests to terminate from parent and clear out-of-date files not being requested
 func DatabaseRoutine(childToParent chan<- Signal, parentToChild <-chan Signal) {
-	var err error
+	//var err error
 
 	Log <- NewNormalEvent("DATABASE", fmt.Sprintf("Database ready for access: %v", Cfg.Sqlite3DBPath))
 
 	for true {
 		select {
 		case sig := <-parentToChild:
-			// die
 			childToParent <- NewSignal(sig.Kind, SignalAccept)
+
+			// try to clear before exiting
+			_ = deleteOutOfDateGlobally()
 			return
-		case <-time.After(15 * time.Minute):
-			err = deleteOutOfDateGlobally()
-			if err != nil {
-				childToParent <- NewSignal(SignalTerminate, SignalRequest)
-				<-parentToChild
-				return
-			}
+			// If reads and writes by sessions themselves delete out of date files then we do not need this routine to lock and scan the entire files tables
+
+			/*
+				case <-time.After(15 * time.Minute):
+					err = deleteOutOfDateGlobally()
+					if err != nil {
+						childToParent <- NewSignal(SignalTerminate, SignalRequest)
+						<-parentToChild
+						return
+					}
+			*/
 		}
 	}
 }

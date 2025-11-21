@@ -29,12 +29,15 @@ type Config struct {
 }
 
 // Globals in this conext are all variables used across multiple files that mutate
-var ReserveStatementRead *sql.Stmt
-var ReserveStatementWrite *sql.Stmt
-var ReleaseStatementRead *sql.Stmt
-var ReleaseStatementWrite *sql.Stmt
+var ReserveStatementSelect *sql.Stmt
+var ReserveStatementUpdate *sql.Stmt
+var ReleaseStatementSelect *sql.Stmt
+var ReleaseStatementUpdate *sql.Stmt
+var ReleaseStatementDelete *sql.Stmt
 var PrepareStatement *sql.Stmt
-var OverwriteSuccessStatement *sql.Stmt
+var OverwriteSuccessSelect *sql.Stmt
+var OverwriteSuccessUpdate *sql.Stmt
+var OverwriteSuccessDelete *sql.Stmt
 var OverwriteFailureStatement *sql.Stmt
 
 // Used by everything

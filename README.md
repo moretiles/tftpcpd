@@ -29,7 +29,5 @@ Use the --help flag to learn about them.
 
 ## Todo
 * Clean up client code.
-* Clean up code for session generally to better fit with using database and storing start time in session.unixMicro.
-* Make it so that rather than using a goroutine that regularly cleans the entire table tftpSession.release checks, when consumers is zeroed, whether it should delete the released file.
 * Standardize errors.
 * Better testing.

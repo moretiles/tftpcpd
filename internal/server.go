@@ -12,8 +12,8 @@ import (
 func ServerInit() error {
 	var err error
 
-	// Increment the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value returning that row. The only parameter is filename.
-	ReserveStatementRead, err = DB.Prepare(`SELECT * FROM files WHERE
+	// Find the row with a matching filename and the greatest uploadCompleted value returning that row. The only parameter is filename.
+	ReserveStatementSelect, err = DB.Prepare(`SELECT * FROM files WHERE
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename )
         LIMIT 1;`)
@@ -23,7 +23,7 @@ func ServerInit() error {
 	}
 
 	// Increment the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value. The only parameter is filename.
-	ReserveStatementWrite, err = DB.Prepare(`UPDATE files SET consumers = consumers + 1 WHERE
+	ReserveStatementUpdate, err = DB.Prepare(`UPDATE files SET consumers = consumers + 1 WHERE
         filename = ? AND
         (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
 	if err != nil {
@@ -31,22 +31,33 @@ func ServerInit() error {
 		return err
 	}
 
-	// Decrement if greater than 0 the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value returning that row. The only parameter is filename.
-	ReleaseStatementRead, err = DB.Prepare(`SELECT * FROM files WHERE
-        consumers != 0 AND
-        filename = ? AND
-        (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename )
-        LIMIT 1;`)
+	// Find all rows with this filename that are out of date and not being consumed.
+	ReleaseStatementSelect, err = DB.Prepare(`SELECT * FROM files WHERE
+            filename = ? AND
+            uploadCompleted != 0 AND
+            consumers = 0 AND
+            (rowid, filename, uploadCompleted) NOT IN ( SELECT rowid, filename, MAX(uploadCompleted) FROM files GROUP BY filename );`)
 	if err != nil {
 		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
 	}
 
-	// Decrement if greater than 0 the number of consumers attached to the row with a matching filename and the greatest uploadCompleted value. The only parameter is filename.
-	ReleaseStatementWrite, err = DB.Prepare(`UPDATE files SET consumers = consumers - 1 WHERE
+	// Decrement if greater than 0 the number of consumers attached to the row with a matching filename and the associated uploadStarted value. The only parameters are filename and uploadStarted time.
+	ReleaseStatementUpdate, err = DB.Prepare(`UPDATE files SET consumers = consumers - 1 WHERE
         consumers != 0 AND
         filename = ? AND
-        (filename, uploadCompleted, consumers) IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
+        uploadStarted = ?;`)
+	if err != nil {
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
+		return err
+	}
+
+	// Clear files with same filename if out of date and not being accessed. Deletes row if number of consumers is 0, file is not being uploaded, filename is the same, and this is not the newest version of this file. The only parameters are filename.
+	ReleaseStatementDelete, err = DB.Prepare(`DELETE FROM files WHERE
+        consumers == 0 AND
+        uploadCompleted != 0 AND
+        filename = ? AND
+        (filename, uploadCompleted, consumers) NOT IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
 	if err != nil {
 		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
@@ -66,8 +77,30 @@ func ServerInit() error {
 		return err
 	}
 
+	// Find all rows with this filename that are out of date and not being consumed.
+	OverwriteSuccessSelect, err = DB.Prepare(`SELECT * FROM files WHERE
+            filename = ? AND
+            uploadCompleted != 0 AND
+            consumers = 0 AND
+            (rowid, filename, uploadCompleted) NOT IN ( SELECT rowid, filename, MAX(uploadCompleted) FROM files GROUP BY filename );`)
+	if err != nil {
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
+		return err
+	}
+
 	// Update row created at the beginning of the upload to reflect its success. Parameters are uploadCompleted, filename, and uploadStarted.
-	OverwriteSuccessStatement, err = DB.Prepare(`UPDATE files SET uploadCompleted = ? WHERE filename = ? AND uploadStarted = ?;`)
+	OverwriteSuccessUpdate, err = DB.Prepare(`UPDATE files SET uploadCompleted = ? WHERE filename = ? AND uploadStarted = ?;`)
+	if err != nil {
+		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
+		return err
+	}
+
+	// Clear files with same filename if out of date and not being accessed. Deletes row if number of consumers is 0, file is not being uploaded, filename is the same, and this is not the newest version of this file. The only parameters are filename.
+	OverwriteSuccessDelete, err = DB.Prepare(`DELETE FROM files WHERE
+        consumers == 0 AND
+        uploadCompleted != 0 AND
+        filename = ? AND
+        (filename, uploadCompleted, consumers) NOT IN ( SELECT filename, MAX(uploadCompleted), consumers FROM files GROUP BY filename );`)
 	if err != nil {
 		Log <- NewErrorEvent("SERVER", fmt.Sprintf("Failed setup to talk to internal database: %v", Cfg.Address))
 		return err
