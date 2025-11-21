@@ -30,4 +30,3 @@ Use the --help flag to learn about them.
 ## Todo
 * Clean up client code.
 * Standardize errors.
-* Better testing.

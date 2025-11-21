@@ -27,8 +27,7 @@ tags
 /tftpcpd
 
 # database and test database
-/tftpcpd.db
-/test.tftpcpd.db
+*.db
 
 # don't track darwin headers
 /MacOSX_SDK

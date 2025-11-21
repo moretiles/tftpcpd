@@ -3,6 +3,7 @@ package internal
 import (
 	"errors"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -48,6 +49,7 @@ type ReadMessage struct {
 }
 
 func NewReadMessage(filename string, mode string, options map[string]string) ReadMessage {
+	_, filename = filepath.Split(filename)
 	return ReadMessage{filename, mode, options}
 }
 
@@ -65,6 +67,7 @@ type WriteMessage struct {
 }
 
 func NewWriteMessage(filename string, mode string, options map[string]string) WriteMessage {
+	_, filename = filepath.Split(filename)
 	return WriteMessage{filename, mode, options}
 }
 
